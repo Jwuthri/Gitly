@@ -143,7 +143,8 @@ def lens(file: str = typer.Argument(..., help="Path to a unified .diff file")):
 
 @app.command()
 def commit(
-    message: str = typer.Argument(None, help="Commit message (omit to auto-generate from the diff)"),
+    message_arg: str = typer.Argument(None, metavar="[MESSAGE]", help="Commit message (omit to auto-generate from the diff)"),
+    message: str = typer.Option(None, "-m", "--message", help="Commit message, git-style (alias for the positional)"),
     all: bool = typer.Option(False, "--all", "-a", help="Stage all changes, including untracked files"),
     path: list[str] = typer.Option(None, "--path", help="Stage only these path(s) (repeatable)"),
     split: bool = typer.Option(False, "--split", help="Auto-split the working tree into several logical commits"),
@@ -153,9 +154,10 @@ def commit(
 ):
     """Commit cleanly: stage safe files, block on secrets, refuse on a protected branch.
 
-    Omit the message and gitly writes a conventional one from the diff — via your
-    configured brain (see `gitly auth`) or, with none, an offline heuristic. Use
-    --split to break a big working tree into several independently-reviewable commits.
+    Pass a message as `-m "..."` (git-style) or positionally; omit it and gitly writes a
+    conventional one from the diff — via your configured brain (see `gitly auth`) or, with
+    none, an offline heuristic. Use --split to break a big working tree into several
+    independently-reviewable commits.
 
     The safe-add guard never stages .env / keys / build junk; pass them with --path
     only if you truly mean to."""
@@ -163,6 +165,7 @@ def commit(
 
     cwd = repo if repo != "." else str(_repo_root())
     mode = "off" if no_llm else "llm" if llm else "auto"
+    text = message or message_arg
 
     try:
         if split:
@@ -171,7 +174,7 @@ def commit(
             for ln in lines:
                 typer.echo(ln)
             raise typer.Exit(0 if ok else 1)
-        ok, msg = safe_commit(cwd, message, stage_all=all, paths=path, msg_mode=mode)
+        ok, msg = safe_commit(cwd, text, stage_all=all, paths=path, msg_mode=mode)
     except GitError as e:
         typer.secho(f"git error: {e}", fg="red", err=True)
         raise typer.Exit(1)
