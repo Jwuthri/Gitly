@@ -37,7 +37,7 @@
 
 | Pillar | What it does | Status |
 |---|---|---|
-| **copilot** | Commit *correctly* instead of `git add . && git commit -m "wip"`. Semantic staging, conventional messages, `absorb`, safe checkpoints, **secret firewall**. | scan live · rest planned |
+| **copilot** | Commit *correctly* instead of `git add . && git commit -m "wip"`. Safe staging, auto-written conventional messages, semantic `--split`, `absorb`, **secret firewall**. | commit · absorb · split · scan live |
 | **shrink** | Turn an unreviewable megaPR into a dependency-ordered stack of small sub-PRs — each compiles & tests — with a *verified* completeness guarantee (`tree(base+slices) == tree(head)`). | **live** (CLI + plan API · verified stacks) |
 | **lens** | Re-render a diff as conceptual **change clusters** ("this 47-site rename is one thing") with outlier flagging. | **live** (substitution · insertion · outlier) |
 | **trace** | **AI authorship provenance.** Records which model/agent wrote which line, from which (secret-redacted) prompt, how much a human changed it, and whether it was reviewed. | live |
@@ -143,13 +143,30 @@ Five pages, two with live demos wired to the backend:
 Installed as a console script by `pip install -e .` (run `make install` first):
 
 ```bash
+# --- commit correctly (the copilot pillar) ---
+gitly commit                 # stage SAFE changes, auto-write a conventional message, commit
+gitly commit -a              # also include untracked files (still skips .env / keys / build junk)
+gitly commit -m "feat: ..."  # supply your own message instead of generating one
+gitly commit --split         # break the working tree into several logical commits (one per concern)
+gitly commit --path src/a.py # stage only the path(s) you name
+gitly absorb                 # fold uncommitted edits into the earlier commit(s) they belong to (fixup + autosquash)
+
+# --- the "brain" (where messages & splits come from) ---
+gitly auth                   # one-time setup: Claude Code (zero-config) / OpenAI / Anthropic / offline
+gitly config                 # show the active provider + key sources (values are never printed)
+
+# --- the rest ---
 gitly trace <file>           # per-line AI/human provenance (git blame + recorded provenance)
 gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin
 gitly shrink <base> <head> --repo .  # split a PR into a VERIFIED stack (materialize + tree-equality)
-gitly lens <file.diff>              # (stub — engine port pending)
+gitly lens <file.diff>              # (CLI stub — the engine itself is live behind the API & commit messages)
 ```
+
+**Intelligence, with zero config.** `gitly commit` writes the conventional-commit message for you, and `--split` carves a sprawling working tree into independently-reviewable commits. The "brain" resolves a provider in this order: an explicit one (`GITLY_LLM_PROVIDER` / `gitly auth`) → an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (real env **or your project's `.env`**) → your local **Claude Code** CLI (`claude -p` — no key at all) → a fully offline heuristic (the lens engine). Run `gitly auth` once to choose; there's nothing to configure if Claude Code is installed.
+
+**It can't leak, and it won't stage the wrong thing.** Every diff is **secret-redacted before it reaches any model** (even your own agent). The **safe-add guard never stages `.env`, `*.pem`/`*.key`, credentials, or build artifacts** (`node_modules/`, `dist/`, `.next/`, …) — and if you force one with `--path`, the **secret firewall** still blocks the commit. Protected branches (`main`/`master`/`develop`/`release`) are refused; published commits are never rewritten by `absorb`.
 
 ---
 
@@ -273,10 +290,10 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook.
+**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook.
 
 **Next:**
-1. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
+1. Surface `commit --split` / `absorb` as MCP tools (the CLI is live; mirror it for the agent).
 2. Shrink: GitHub-App worker (clone → open stacked PRs) + squash-merge stack reconciliation + the Docker validation sandbox.
 3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
 4. A dedicated docs site.
