@@ -1,7 +1,7 @@
 .PHONY: install api worker web test fmt seed up down
 
 install:
-	python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev,llm]"
+	python -m venv .venv && . .venv/bin/activate && pip install -e ".[server,dev,llm]"
 	cd frontend && npm install
 
 api:

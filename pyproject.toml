@@ -3,7 +3,17 @@ name = "gitly"
 version = "0.0.1"
 description = "Git-quality tooling for the AI-authorship era: commit right, shrink megaPRs, read diffs, and trace who really wrote the code."
 requires-python = ">=3.12"
+# Lean core — all the `gitly` CLI needs (commit, absorb, scan, trace, shrink).
 dependencies = [
+  "typer>=0.12",
+  "pydantic>=2.7",
+  "unidiff>=0.7.5",
+  "networkx>=3.3",
+]
+
+[project.optional-dependencies]
+# The API + worker stack (NOT needed for the CLI). `pip install gitly[server]`.
+server = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "celery>=5.4",
@@ -11,15 +21,9 @@ dependencies = [
   "sqlalchemy>=2.0",
   "alembic>=1.13",
   "psycopg[binary]>=3.2",
-  "pydantic>=2.7",
   "pydantic-settings>=2.3",
-  "typer>=0.12",
-  "unidiff>=0.7.5",
-  "networkx>=3.3",
   "httpx>=0.27",
 ]
-
-[project.optional-dependencies]
 llm = ["anthropic>=0.34"]          # optional, opt-in intent labels / commit messages
 dev = ["pytest>=8", "ruff>=0.5"]
 
