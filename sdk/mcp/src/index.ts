@@ -42,6 +42,11 @@ const TOOLS: any[] = [
     description: "Propose splitting a large change into a verified stack of small sub-PRs (gitly shrink).",
     inputSchema: { type: "object", properties: { base: { type: "string", description: "base ref (default main)" }, head: { type: "string", description: "head ref (default HEAD)" }, cwd: { type: "string" } } },
   },
+  {
+    name: "gitly_absorb",
+    description: "Fold uncommitted working changes into the right earlier commit(s) and re-stack (Sapling-style absorb). Each changed file goes into the last local commit that touched it, unless `into` targets one commit. Refuses on protected branches or already-pushed commits; aborts cleanly on conflict.",
+    inputSchema: { type: "object", properties: { into: { type: "string", description: "optional: a commit ref to absorb every change into" }, cwd: { type: "string" } } },
+  },
 ];
 
 async function dispatch(name: string, a: any, cwd: string): Promise<string> {
@@ -117,6 +122,8 @@ async function dispatch(name: string, a: any, cwd: string): Promise<string> {
       const r = await g.shrinkJob(await g.repoName(cwd), a.base || "main", a.head || "HEAD");
       return `shrink job ${r.job_id} (queued=${r.queued}). ${r.note || ""}`;
     }
+    case "gitly_absorb":
+      return await g.absorb(cwd, a.into);
     default:
       return `unknown tool: ${name}`;
   }

@@ -10,8 +10,12 @@ const exec = promisify(execFile);
 export const API = process.env.GITLY_API_URL || "http://localhost:8000";
 
 // ---- git ----
-export async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await exec("git", args, { cwd, maxBuffer: 16 * 1024 * 1024 });
+export async function git(cwd: string, args: string[], env?: Record<string, string>): Promise<string> {
+  const { stdout } = await exec("git", args, {
+    cwd,
+    maxBuffer: 16 * 1024 * 1024,
+    env: env ? { ...process.env, ...env } : undefined,
+  });
   return stdout;
 }
 export async function repoRoot(cwd: string): Promise<string> {
@@ -83,4 +87,71 @@ export async function recordAuthorship(
   };
   await appendFile(join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(rec) + "\n", "utf8");
   return event_id;
+}
+
+// ---- absorb: fold working changes into the right earlier commit(s) + re-stack ----
+async function earliestOf(cwd: string, shas: string[]): Promise<string> {
+  const order = (await git(cwd, ["log", "--format=%H", "-n", "300"])).split("\n").map((s) => s.trim());
+  let best = shas[0], bestIdx = -1;
+  for (const s of shas) {
+    const i = order.indexOf(s);
+    if (i > bestIdx) { bestIdx = i; best = s; }  // larger index = older commit
+  }
+  return best;
+}
+
+export async function absorb(cwd: string, into?: string): Promise<string> {
+  if (!(await git(cwd, ["status", "--porcelain"])).trim()) return "Nothing to absorb — the working tree is clean.";
+  const branch = await currentBranch(cwd);
+  if (PROTECTED.test(branch)) return `Refusing to absorb on protected branch '${branch}'. Switch to a feature branch first.`;
+
+  const changed = (await git(cwd, ["diff", "HEAD", "--name-only"])).split("\n").map((s) => s.trim()).filter(Boolean);
+  if (!changed.length) return "Only new/untracked files to commit — nothing to absorb. Use gitly_safe_commit.";
+
+  const upstream = (await git(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).catch(() => "")).trim();
+  const since = upstream ? `${upstream}..HEAD` : "";
+
+  // Each changed file -> the last local commit that touched it (or an explicit `into`).
+  const targets: Record<string, string[]> = {};
+  for (const f of changed) {
+    let target = into || "";
+    if (!target) {
+      const args = ["log", "-n", "1", "--format=%H"];
+      if (since) args.push(since);
+      args.push("--", f);
+      target = (await git(cwd, args)).trim();
+    }
+    if (!target) return `No local commit found that touches "${f}". Commit it first (gitly_safe_commit) or pass \`into\`.`;
+    (targets[target] ||= []).push(f);
+  }
+
+  // Never rewrite published history.
+  if (upstream) {
+    for (const t of Object.keys(targets)) {
+      if ((await git(cwd, ["branch", "-r", "--contains", t]).catch(() => "")).trim()) {
+        return `Target ${t.slice(0, 8)} is already pushed — refusing to rewrite published history.`;
+      }
+    }
+  }
+
+  // One fixup commit per target (stage only that target's files).
+  for (const [t, fs] of Object.entries(targets)) {
+    await git(cwd, ["reset", "-q"]);
+    await git(cwd, ["add", "--", ...fs]);
+    await git(cwd, ["commit", "-q", "--fixup", t]);
+  }
+
+  // Non-interactive autosquash rebase from just before the earliest target.
+  const earliest = await earliestOf(cwd, Object.keys(targets));
+  const hasParent = await git(cwd, ["rev-parse", "--verify", `${earliest}^`]).then(() => true).catch(() => false);
+  const base = hasParent ? [`${earliest}^`] : ["--root"];
+  try {
+    await git(cwd, ["rebase", "-i", "--autosquash", ...base], { GIT_SEQUENCE_EDITOR: "true", GIT_EDITOR: "true" });
+  } catch {
+    await git(cwd, ["rebase", "--abort"]).catch(() => {});
+    return "Could not absorb cleanly (rebase conflict). Aborted — your commits and changes are untouched.";
+  }
+  const nFiles = Object.values(targets).reduce((a, b) => a + b.length, 0);
+  const tlist = Object.keys(targets).map((t) => t.slice(0, 8)).join(", ");
+  return `Absorbed ${nFiles} file change(s) into ${Object.keys(targets).length} commit(s): ${tlist}. History re-stacked.`;
 }
