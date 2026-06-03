@@ -78,8 +78,12 @@ async function dispatch(name: string, a: any, cwd: string): Promise<string> {
       }
       if (!diff.trim()) return "No diff to explain.";
       const r = await g.analyzeDiff(diff);
-      const files = (r.skeleton || []).map((f: any) => `  • ${f.path} — ${f.change}, ${f.hunks} hunk(s)`).join("\n");
-      return `${r.files} file(s), ${r.changed_lines} changed lines.\n${files}\n\nclusters: ${r.clusters}`;
+      const lines = (r.clusters || [])
+        .map((c: any) =>
+          `  • [${c.confidence}] ${c.title} (${c.site_count} sites/${c.file_count} files)` +
+          (c.outliers?.length ? `  ! ${c.outliers.length} outlier(s)` : ""))
+        .join("\n");
+      return `${r.stats.files_changed} file(s), +${r.stats.lines_added}/-${r.stats.lines_removed}, ${r.stats.cluster_count} cluster(s):\n${lines}`;
     }
     case "gitly_safe_commit": {
       const branch = await g.currentBranch(cwd);

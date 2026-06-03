@@ -39,7 +39,7 @@
 |---|---|---|
 | **copilot** | Commit *correctly* instead of `git add . && git commit -m "wip"`. Semantic staging, conventional messages, `absorb`, safe checkpoints, **secret firewall**. | scan live · rest planned |
 | **shrink** | Turn an unreviewable megaPR into a dependency-ordered stack of small sub-PRs — each compiles & tests — with a *verified* completeness guarantee (`tree(base+slices) == tree(head)`). | engine port pending |
-| **lens** | Re-render a diff as conceptual **change clusters** ("this 47-site rename is one thing") with outlier flagging. | parser live · clustering port pending |
+| **lens** | Re-render a diff as conceptual **change clusters** ("this 47-site rename is one thing") with outlier flagging. | **live** (substitution · insertion · outlier) |
 | **trace** | **AI authorship provenance.** Records which model/agent wrote which line, from which (secret-redacted) prompt, how much a human changed it, and whether it was reviewed. | live |
 
 The engines for `shrink` and `lens` port in from two sibling repos — see [`MIGRATION.md`](MIGRATION.md).
@@ -53,7 +53,7 @@ gitly/
 ├── backend/         FastAPI API + the four engines            (Python · FastAPI · Celery)
 │   └── app/
 │       ├── api/routes/   health · trace · lens · copilot · shrink
-│       ├── engines/      trace (real) · shrink/lens/copilot (seams)
+│       ├── engines/      trace + lens (real) · shrink/copilot (seams)
 │       ├── security/     secret_firewall.py  (layered scan + redaction)
 │       ├── db/           SQLAlchemy models + session
 │       ├── cli.py        the `gitly` CLI
@@ -258,10 +258,10 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (7 tools) · provenance SDK + capture hook.
+**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (7 tools) · provenance SDK + capture hook.
 
 **Next:**
-1. Port the **lens** clustering engine (real concept cards) — see [`MIGRATION.md`](MIGRATION.md).
-2. Port the **shrink** engine (verified stacks) + a shrink runner UI.
-3. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
+1. Port the **shrink** engine (verified stacks) + a shrink runner UI — see [`MIGRATION.md`](MIGRATION.md).
+2. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
+3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
 4. A dedicated docs site.

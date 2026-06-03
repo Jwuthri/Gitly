@@ -2,25 +2,127 @@
 import { useState } from "react";
 import { analyzeDiff } from "@/lib/clientApi";
 
-const SAMPLE = `diff --git a/src/auth.py b/src/auth.py
-index 1111111..2222222 100644
---- a/src/auth.py
-+++ b/src/auth.py
-@@ -10,7 +10,7 @@ def login(user):
--    token = make_token(user)
-+    token = issue_token(user)
-@@ -22,6 +22,7 @@ def refresh(user):
--    return make_token(user)
-+    return issue_token(user)
-+    log.info("refreshed")
-diff --git a/src/api.py b/src/api.py
-index 3333333..4444444 100644
---- a/src/api.py
-+++ b/src/api.py
-@@ -5,7 +5,7 @@ def handler(u):
--    t = make_token(u)
-+    t = issue_token(u)
+const SAMPLE = `diff --git a/src/api/users.ts b/src/api/users.ts
+index 1aaaaaa..1bbbbbb 100644
+--- a/src/api/users.ts
++++ b/src/api/users.ts
+@@ -1,4 +1,4 @@
+ import { Router } from 'express';
+-import { db } from '@/utils/legacy-db';
++import { db } from '@/lib/database';
+
+ const router = Router();
+@@ -12,3 +12,3 @@ router.get('/:id', async (req, res) => {
+   const id = req.params.id;
+-  const user = await getUser(req.params.id);
++  const user = await fetchUser(req.params.id);
+   res.json(user);
+@@ -40,3 +40,3 @@ export async function current(session) {
+   if (!session) return null;
+-  const u = getUser(session.uid);
++  const u = fetchUser(session.uid);
+   return u;
+diff --git a/src/api/orders.ts b/src/api/orders.ts
+index 2aaaaaa..2bbbbbb 100644
+--- a/src/api/orders.ts
++++ b/src/api/orders.ts
+@@ -8,3 +8,3 @@ export async function owner(order) {
+   const order = await findOrder(id);
+-  const owner = await getUser(order.userId);
++  const owner = await fetchUser(order.userId);
+   return owner;
+@@ -22,3 +22,3 @@ export async function adminFor(adminId) {
+   await assertAdmin(adminId);
+-  const admin = await getUser(adminId);
++  const admin = await getCurrentUser(adminId);
+   return admin;
+diff --git a/src/api/admin.ts b/src/api/admin.ts
+index 3aaaaaa..3bbbbbb 100644
+--- a/src/api/admin.ts
++++ b/src/api/admin.ts
+@@ -5,3 +5,3 @@ export function lookup(targetId) {
+   assertRole('admin');
+-  return getUser(targetId);
++  return fetchUser(targetId);
+ }
+diff --git a/src/services/profile.ts b/src/services/profile.ts
+index 8aaaaaa..8bbbbbb 100644
+--- a/src/services/profile.ts
++++ b/src/services/profile.ts
+@@ -7,3 +7,3 @@ export async function profileFor(uid) {
+   if (!uid) throw new Error('no uid');
+-  const profile = getUser(uid);
++  const profile = fetchUser(uid);
+   return profile.public;
+diff --git a/src/db/client.ts b/src/db/client.ts
+index 6aaaaaa..6bbbbbb 100644
+--- a/src/db/client.ts
++++ b/src/db/client.ts
+@@ -1,3 +1,3 @@
+ import { Pool } from 'pg';
+-import { pool } from '@/utils/legacy-db';
++import { pool } from '@/lib/database';
+ export const client = pool;
+diff --git a/server/handlers.go b/server/handlers.go
+index 4aaaaaa..4bbbbbb 100644
+--- a/server/handlers.go
++++ b/server/handlers.go
+@@ -10,3 +10,3 @@ package server
+ // GetUser returns a user by id.
+-func GetUser(w http.ResponseWriter, r *http.Request) {
++func GetUser(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+   id := chi.URLParam(r, "id")
+@@ -25,3 +25,3 @@ func GetUser(ctx, w, r) {
+ // ListUsers returns all users.
+-func ListUsers(w http.ResponseWriter, r *http.Request) {
++func ListUsers(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+   page := query(r, "page")
+diff --git a/server/routes.go b/server/routes.go
+index 5aaaaaa..5bbbbbb 100644
+--- a/server/routes.go
++++ b/server/routes.go
+@@ -14,3 +14,3 @@ func Register(r chi.Router) {
+ // Health is the liveness probe.
+-func Health(w http.ResponseWriter, r *http.Request) {
++func Health(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+   w.WriteHeader(200)
+diff --git a/package.json b/package.json
+index 7aaaaaa..7bbbbbb 100644
+--- a/package.json
++++ b/package.json
+@@ -2,3 +2,3 @@
+   "name": "acme-api",
+-  "version": "2.3.0",
++  "version": "2.4.0",
+   "private": true,
 `;
+
+const CONF: Record<string, string> = { high: "accent", medium: "ai", low: "" };
+const ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+// render `backtick code` spans inside a title/reason
+function ticks(s: string) {
+  return s.split("`").map((seg, i) => (i % 2 ? <code key={i}>{seg}</code> : <span key={i}>{seg}</span>));
+}
+
+function DiffSnip({ hunk }: { hunk: any }) {
+  if (!hunk) return null;
+  const lines = (hunk.lines || []).slice(0, 14);
+  return (
+    <div className="diffsnip">
+      {lines.map((ln: any, i: number) => {
+        const cls = ln.type === "add" ? "add" : ln.type === "remove" ? "rem" : "ctx";
+        const g = ln.type === "add" ? "+" : ln.type === "remove" ? "-" : " ";
+        return (
+          <div className={`dl ${cls}`} key={i}>
+            <span className="g">{g}</span>
+            {ln.content}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function LensClient() {
   const [diff, setDiff] = useState(SAMPLE);
@@ -34,6 +136,12 @@ export default function LensClient() {
     catch (e: any) { setErr(e?.message || "request failed"); }
     finally { setLoading(false); }
   }
+
+  const clusters = res
+    ? [...(res.clusters || [])].sort(
+        (a, b) => (ORDER[a.confidence] - ORDER[b.confidence]) || (b.site_count - a.site_count),
+      )
+    : [];
 
   return (
     <div className="card-grid cols-2" style={{ alignItems: "start" }}>
@@ -50,29 +158,30 @@ export default function LensClient() {
 
       <div>
         {err && <div className="callout danger"><span>{err}. Is the backend running on :8000?</span></div>}
-        {!res && !err && <div className="card dim">Parsed structure appears here. Clustering ports from the lens engine (pr-visual-diff).</div>}
+        {!res && !err && <div className="card dim">Conceptual clusters appear here. A repeated rename / import migration collapses into one card; deviating sites are flagged as outliers.</div>}
         {res && (
           <>
-            <div className="card-grid cols-2" style={{ marginBottom: 14 }}>
-              <div className="card stat"><div className="lbl">files</div><div className="big">{res.files}</div></div>
-              <div className="card stat"><div className="lbl">changed lines</div><div className="big accent">{res.changed_lines}</div></div>
+            <div className="row" style={{ gap: 18, marginBottom: 14 }}>
+              <span className="mono dim">{res.stats.files_changed} files</span>
+              <span className="mono" style={{ color: "var(--human)" }}>+{res.stats.lines_added}</span>
+              <span className="mono" style={{ color: "var(--danger)" }}>−{res.stats.lines_removed}</span>
+              <span className="mono dim">{res.stats.cluster_count} clusters · {res.stats.hunk_count} hunks</span>
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              {(res.skeleton ?? []).map((f: any, i: number) => (
-                <div className="card" key={i} style={{ padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div className="file mono">{f.path}</div>
-                    <div className="mono dim" style={{ fontSize: 11.5, marginTop: 4 }}>{f.hunks} hunk(s)</div>
-                  </div>
-                  <span className={`pill ${f.change === "add" ? "human" : f.change === "delete" ? "danger" : "ai"}`}>
-                    <span className="dot" />{f.change}
-                  </span>
+            {clusters.map((c: any) => (
+              <div className="cluster-card" key={c.id}>
+                <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontWeight: 600 }}>{ticks(c.title)}</div>
+                  <span className={`pill ${CONF[c.confidence]}`}><span className="dot" />{c.confidence}</span>
                 </div>
-              ))}
-            </div>
-            <div className="callout warn" style={{ marginTop: 14 }}>
-              <span><strong>Clustering next:</strong> {String(res.clusters)}</span>
-            </div>
+                <div className="cluster-meta">
+                  {c.kind} · {c.site_count} site{c.site_count > 1 ? "s" : ""} · {c.file_count} file{c.file_count > 1 ? "s" : ""}
+                </div>
+                <DiffSnip hunk={res.hunks?.[c.representative_hunk_id]} />
+                {(c.outliers || []).map((o: any, i: number) => (
+                  <div className="outlier" key={i}>⚠ {ticks(o.reason)}</div>
+                ))}
+              </div>
+            ))}
           </>
         )}
       </div>
