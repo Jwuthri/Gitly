@@ -1,4 +1,4 @@
-"""Provenance API — opt-in sync of commit-bound authorship records + dashboard rollups."""
+"""Provenance API — opt-in sync of authorship records, rollups, file tree, and per-line blame."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -15,8 +15,8 @@ router = APIRouter(prefix="/trace", tags=["trace"])
 
 @router.post("/records")
 def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db)):
-    """Sync commit-bound provenance from a developer's machine (opt-in). Prompts are
-    re-redacted defensively on ingest, so a raw secret can never land in the DB."""
+    """Sync authorship records from a developer's machine (opt-in). Prompts are re-redacted
+    defensively on ingest, so a raw secret can never land in the DB."""
     for r in records:
         db.merge(ProvenanceRecordORM(
             record_id=r.record_id, repo=r.repo, commit_sha=r.commit_sha,
@@ -24,6 +24,7 @@ def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db
             author_type=r.author_type.value, model=r.model, agent=r.agent.value,
             session_id=r.session_id, prompt_ref=r.prompt_ref,
             prompt_redacted=redact(r.prompt_redacted) if r.prompt_redacted else None,
+            content=r.content,
             human_edit_ratio=r.human_edit_ratio, reviewed_by=r.reviewed_by,
             reviewed_at=r.reviewed_at, created_at=r.created_at, bound_at=r.bound_at,
         ))
@@ -31,13 +32,16 @@ def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db
     return {"ingested": len(records)}
 
 
-@router.get("/summary")
-def repo_summary(repo: str, db: Session = Depends(get_db)) -> TraceSummary:
-    rows = db.execute(
+def _records_for(db: Session, repo: str):
+    return db.execute(
         select(ProvenanceRecordORM).where(ProvenanceRecordORM.repo == repo)
     ).scalars().all()
+
+
+@router.get("/summary")
+def repo_summary(repo: str, db: Session = Depends(get_db)) -> TraceSummary:
     s = TraceSummary(repo=repo)
-    for r in rows:
+    for r in _records_for(db, repo):
         span = max(1, r.line_end - r.line_start + 1)
         s.total_lines += span
         if r.author_type == "ai":
@@ -52,6 +56,50 @@ def repo_summary(repo: str, db: Session = Depends(get_db)) -> TraceSummary:
             s.by_model[r.model] = s.by_model.get(r.model, 0) + span
         s.by_agent[r.agent] = s.by_agent.get(r.agent, 0) + span
     return s
+
+
+@router.get("/tree")
+def file_tree(repo: str, db: Session = Depends(get_db)):
+    """Per-file authorship rollup for the file-tree sidebar."""
+    by_file: dict[str, dict] = {}
+    for r in _records_for(db, repo):
+        span = max(1, r.line_end - r.line_start + 1)
+        f = by_file.setdefault(r.file_path, {"path": r.file_path, "lines": 0, "ai_lines": 0, "unreviewed": 0})
+        f["lines"] = max(f["lines"], r.line_end)
+        if r.author_type in ("ai", "hybrid"):
+            f["ai_lines"] += span
+            if not r.reviewed_by:
+                f["unreviewed"] += span
+    return {"repo": repo, "files": sorted(by_file.values(), key=lambda x: x["path"])}
+
+
+@router.get("/file")
+def file_blame(repo: str, path: str, db: Session = Depends(get_db)):
+    """Per-line blame for one file: each line tagged with who authored it. Reconstructed
+    from the file's stored record spans (the web equivalent of `gitly trace <file>`)."""
+    rows = sorted(
+        [r for r in _records_for(db, repo) if r.file_path == path],
+        key=lambda r: r.line_start,
+    )
+    lines: list[dict] = []
+    for r in rows:
+        body = (r.content or "").split("\n") if r.content else [""] * (r.line_end - r.line_start + 1)
+        for i, text in enumerate(body):
+            ln = r.line_start + i
+            if ln > r.line_end:
+                break
+            lines.append({
+                "line_no": ln,
+                "content": text,
+                "author_type": r.author_type,
+                "model": r.model,
+                "agent": r.agent,
+                "reviewed": bool(r.reviewed_by),
+                "human_edit_ratio": r.human_edit_ratio,
+                "prompt": r.prompt_redacted,
+                "commit_sha": r.commit_sha[:8],
+            })
+    return {"path": path, "lines": lines}
 
 
 @router.get("/records")

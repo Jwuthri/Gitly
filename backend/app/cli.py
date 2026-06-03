@@ -94,9 +94,44 @@ def scan(staged: bool = typer.Option(False, "--staged", help="Scan staged change
 
 
 @app.command()
-def shrink(repo: str = typer.Argument("."), base: str = typer.Argument("main"), head: str = typer.Argument("HEAD")):
-    """Split a megaPR into a verified stack. (engine ports from pr-shrinker — see MIGRATION.md)"""
-    typer.echo("shrink: engine port pending — see MIGRATION.md (../pr-shrinker)")
+def shrink(
+    base: str = typer.Argument(..., help="Base ref (e.g. main)"),
+    head: str = typer.Argument("HEAD", help="Head ref"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+    strength: str = typer.Option("balanced", "--strength", help="gentle | balanced | aggressive"),
+    max_lines: int = typer.Option(0, "--max-lines", help="Override max lines/slice (0 = use --strength)"),
+    write_refs: bool = typer.Option(False, "--write-refs", help="Create shrink/* branches for each slice"),
+    llm: bool = typer.Option(False, "--llm", help="Use the LLM labeler (needs GITLY_ANTHROPIC_API_KEY)"),
+):
+    """Split a PR (base..head) into a verified stack of small sub-PRs."""
+    from backend.app.engines.shrink.planner.planner import PlanOptions
+    from backend.app.engines.shrink.service import shrink as run_shrink
+
+    presets = {
+        "gentle": dict(max_lines=1500, min_lines=300, max_slices=2),
+        "balanced": dict(max_lines=400, min_lines=40, max_slices=6),
+        "aggressive": dict(max_lines=120, min_lines=1, max_slices=20),
+    }
+    preset = dict(presets.get(strength, presets["balanced"]))
+    if max_lines:
+        preset["max_lines"] = max_lines
+    root = repo if repo != "." else str(_repo_root())
+    res = run_shrink(root, base, head, opts=PlanOptions(**preset), write_refs=write_refs, prefer_llm=llm)
+    typer.echo(f"{res.original_lines} lines / {res.original_files} files  ->  {len(res.slices)} slices")
+    for s in res.slices:
+        dep = f"  (after #{', #'.join(map(str, s.depends_on))})" if s.depends_on else ""
+        typer.echo(f"  #{s.order}  {s.title}  [{s.lines} ln / {s.files} files]{dep}")
+        if s.intent:
+            typer.echo(f"        {s.intent}")
+    if res.completeness_ok:
+        typer.secho("ok: completeness verified — tree(base + slices) == tree(head)", fg="green")
+    else:
+        typer.secho("x: completeness FAILED — stack not shipped", fg="red", err=True)
+        raise typer.Exit(1)
+    if write_refs and res.materialized:
+        typer.echo("branches:")
+        for sc in res.materialized.slices:
+            typer.echo(f"  {sc.branch}  ({sc.commit_sha[:10]})")
 
 
 @app.command()

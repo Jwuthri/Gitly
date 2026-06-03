@@ -38,7 +38,7 @@
 | Pillar | What it does | Status |
 |---|---|---|
 | **copilot** | Commit *correctly* instead of `git add . && git commit -m "wip"`. Semantic staging, conventional messages, `absorb`, safe checkpoints, **secret firewall**. | scan live · rest planned |
-| **shrink** | Turn an unreviewable megaPR into a dependency-ordered stack of small sub-PRs — each compiles & tests — with a *verified* completeness guarantee (`tree(base+slices) == tree(head)`). | engine port pending |
+| **shrink** | Turn an unreviewable megaPR into a dependency-ordered stack of small sub-PRs — each compiles & tests — with a *verified* completeness guarantee (`tree(base+slices) == tree(head)`). | **live** (CLI + plan API · verified stacks) |
 | **lens** | Re-render a diff as conceptual **change clusters** ("this 47-site rename is one thing") with outlier flagging. | **live** (substitution · insertion · outlier) |
 | **trace** | **AI authorship provenance.** Records which model/agent wrote which line, from which (secret-redacted) prompt, how much a human changed it, and whether it was reviewed. | live |
 
@@ -53,7 +53,7 @@ gitly/
 ├── backend/         FastAPI API + the four engines            (Python · FastAPI · Celery)
 │   └── app/
 │       ├── api/routes/   health · trace · lens · copilot · shrink
-│       ├── engines/      trace + lens (real) · shrink/copilot (seams)
+│       ├── engines/      trace + lens + shrink (real) · copilot (seam)
 │       ├── security/     secret_firewall.py  (layered scan + redaction)
 │       ├── db/           SQLAlchemy models + session
 │       ├── cli.py        the `gitly` CLI
@@ -147,7 +147,7 @@ gitly trace <file>           # per-line AI/human provenance (git blame + recorde
 gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin
-gitly shrink <repo> <base> <head>   # (stub — engine port pending)
+gitly shrink <base> <head> --repo .  # split a PR into a VERIFIED stack (materialize + tree-equality)
 gitly lens <file.diff>              # (stub — engine port pending)
 ```
 
@@ -258,10 +258,10 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (7 tools) · provenance SDK + capture hook.
+**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (7 tools) · provenance SDK + capture hook.
 
 **Next:**
-1. Port the **shrink** engine (verified stacks) + a shrink runner UI — see [`MIGRATION.md`](MIGRATION.md).
-2. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
+1. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
+2. Shrink: GitHub-App worker (clone → open stacked PRs) + squash-merge stack reconciliation + the Docker validation sandbox.
 3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
 4. A dedicated docs site.

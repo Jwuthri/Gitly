@@ -1,18 +1,17 @@
 import AuthorshipBar from "@/components/AuthorshipBar";
-import ProvenanceTable from "@/components/ProvenanceTable";
-import { getTraceRecords, getTraceSummary } from "@/lib/api";
+import TraceExplorer from "@/components/TraceExplorer";
+import { getTraceSummary } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 export default async function TracePage({ searchParams }: { searchParams: { repo?: string } }) {
   const repo = (searchParams.repo ?? "demo-app").trim();
   let summary: any = null;
-  let records: any[] = [];
   let error = "";
 
   if (repo) {
     try {
-      [summary, records] = await Promise.all([getTraceSummary(repo), getTraceRecords(repo)]);
+      summary = await getTraceSummary(repo);
     } catch {
       error = "Could not reach the gitly API.";
     }
@@ -47,7 +46,7 @@ export default async function TracePage({ searchParams }: { searchParams: { repo
         <>
           <section style={{ paddingTop: 0 }}>
             <div className="card-grid cols-4">
-              <div className="card stat"><div className="lbl">tracked lines</div><div className="big">{summary.total_lines.toLocaleString()}</div><div className="sub">{records.length} spans</div></div>
+              <div className="card stat"><div className="lbl">tracked lines</div><div className="big">{summary.total_lines.toLocaleString()}</div><div className="sub">with provenance</div></div>
               <div className="card stat"><div className="lbl">AI authored</div><div className="big accent">{pct}%</div><div className="sub">{summary.ai_lines.toLocaleString()} lines</div></div>
               <div className="card stat"><div className="lbl">hybrid</div><div className="big" style={{ color: "var(--hybrid)" }}>{summary.hybrid_lines.toLocaleString()}</div><div className="sub">AI + human edits</div></div>
               <div className="card stat"><div className="lbl">unreviewed AI</div><div className="big" style={{ color: "var(--warn)" }}>{summary.unreviewed_ai_lines.toLocaleString()}</div><div className="sub">needs a human</div></div>
@@ -86,8 +85,11 @@ export default async function TracePage({ searchParams }: { searchParams: { repo
           )}
 
           <section style={{ paddingTop: 0 }}>
-            <div className="section-head" style={{ marginBottom: 18 }}><h2 style={{ fontSize: 24 }}>Records</h2></div>
-            <ProvenanceTable records={records} />
+            <div className="section-head" style={{ marginBottom: 18 }}>
+              <h2 style={{ fontSize: 24 }}>Browse by file</h2>
+              <p className="lead" style={{ fontSize: 15 }}>Pick a file to see every line annotated with who — or what — wrote it.</p>
+            </div>
+            <TraceExplorer repo={repo} />
           </section>
         </>
       )}

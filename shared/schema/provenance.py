@@ -62,6 +62,7 @@ class ProvenanceRecord(BaseModel):
     session_id: str | None = None
     prompt_ref: str | None = None
     prompt_redacted: str | None = None
+    content: str | None = None              # the span's code text (newline-joined), for blame views
     human_edit_ratio: float = 0.0           # 0.0 = untouched AI · 1.0 = fully rewritten by a human
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None

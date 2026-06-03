@@ -169,28 +169,52 @@ def _enforce_max_slices(groups: list[_Group], max_slices: int, max_lines: int) -
     return groups
 
 
+_CAT_LABEL = {
+    Category.DEPS: "dependencies",
+    Category.CONFIG: "config",
+    Category.MIGRATION: "migrations",
+    Category.SOURCE: "source",
+    Category.TEST: "tests",
+    Category.DOCS: "docs",
+}
+
+
+def _join(items: list[str]) -> str:
+    items = list(dict.fromkeys(items))  # dedupe, keep order
+    if len(items) <= 1:
+        return items[0] if items else ""
+    if len(items) == 2:
+        return f"{items[0]} & {items[1]}"
+    return ", ".join(items[:-1]) + f" & {items[-1]}"
+
+
 def _title_for(g: _Group) -> str:
-    mod = g.module if g.module != "(root)" else "project"
-    defs = sorted(g.defines)
+    """Title a slice from the categories/modules it actually contains — so a merged,
+    multi-category slice describes everything it spans (e.g. 'Dependencies & source')."""
+    cats = sorted({u.category for u in g.units})
     if g.generated:
-        return f"Update generated files in {mod}"
-    match g.category:
-        case Category.DEPS:
-            return "Add/update dependencies"
-        case Category.CONFIG:
-            return f"Configuration changes in {mod}"
-        case Category.MIGRATION:
-            return f"Database migration in {mod}"
-        case Category.TEST:
-            return f"Tests for {mod}"
-        case Category.DOCS:
-            return f"Update docs in {mod}"
-        case _:
-            if defs:
-                lead = defs[0]
-                extra = f" (+{len(defs) - 1} more)" if len(defs) > 1 else ""
-                return f"Add {lead}{extra}"
-            return f"Changes in {mod}"
+        return "Update generated files"
+    if len(cats) > 1:
+        return _join([_CAT_LABEL[c] for c in cats]).capitalize()
+    cat = cats[0]
+    mods = sorted({u.module for u in g.units if u.module != "(root)"})
+    where = "project" if not mods else _join(mods) if len(mods) <= 2 else f"{mods[0]} +{len(mods) - 1} more"
+    defs = sorted(g.defines)
+    if cat == Category.DEPS:
+        return "Add/update dependencies"
+    if cat == Category.CONFIG:
+        return f"Configuration changes in {where}"
+    if cat == Category.MIGRATION:
+        return f"Database migration in {where}"
+    if cat == Category.TEST:
+        return f"Tests for {where}"
+    if cat == Category.DOCS:
+        return f"Update docs in {where}"
+    if defs:
+        lead = defs[0]
+        extra = f" (+{len(defs) - 1} more)" if len(defs) > 1 else ""
+        return f"Add {lead}{extra}"
+    return f"Changes in {where}"
 
 
 def _depends_on(groups: list[_Group]) -> list[list[int]]:

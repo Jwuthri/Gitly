@@ -29,6 +29,7 @@ class ProvenanceRecordORM(Base):
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     prompt_ref: Mapped[str | None] = mapped_column(String, nullable=True)
     prompt_redacted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     human_edit_ratio: Mapped[float] = mapped_column(Float, default=0.0)
     reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
