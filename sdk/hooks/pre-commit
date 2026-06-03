@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# gitly pre-commit hook — block secrets before they're committed.
+# Install:  ln -sf ../../sdk/hooks/pre-commit .git/hooks/pre-commit
+set -euo pipefail
+
+if command -v gitly >/dev/null 2>&1; then
+  gitly scan --staged || exit 1
+else
+  # fallback: scan the staged diff for the highest-signal patterns
+  if git diff --cached | grep -Eq 'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|sk-(ant-)?[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
+    echo "x gitly: potential secret in staged changes — commit blocked (install gitly for the full scan)"
+    exit 1
+  fi
+fi

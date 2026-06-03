@@ -1,0 +1,25 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+*.db
+
+# env / secrets
+.env
+.env.local
+*.pem
+secrets/
+
+# node / next
+node_modules/
+.next/
+out/
+
+# gitly local provenance cache (bound records are synced to the DB instead)
+.gitly/cache/

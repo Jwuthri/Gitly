@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: gitly
+      POSTGRES_PASSWORD: gitly
+      POSTGRES_DB: gitly
+    ports: ["5433:5432"]          # host 5433 -> avoids colliding with other local stacks
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitly"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports: ["6380:6379"]          # host 6380 -> avoids colliding with other local stacks
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: { context: ., dockerfile: docker/Dockerfile.backend }
+    restart: unless-stopped
+    command: uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql+psycopg://gitly:gitly@postgres:5432/gitly
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      WATCHFILES_FORCE_POLLING: "true"     # reliable --reload over the bind mount
+    volumes:
+      - ./backend:/app/backend             # live source for hot reload (no rebuild per edit)
+      - ./shared:/app/shared
+      - ./workers:/app/workers
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: { context: ., dockerfile: docker/Dockerfile.backend }
+    restart: unless-stopped
+    command: celery -A workers.celery:celery worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+psycopg://gitly:gitly@postgres:5432/gitly
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - ./backend:/app/backend             # same source (restart worker to pick up task changes)
+      - ./shared:/app/shared
+      - ./workers:/app/workers
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  frontend:
+    build: { context: ., dockerfile: docker/Dockerfile.frontend }
+    restart: unless-stopped
+    command: npm run dev -- -H 0.0.0.0              # bind all interfaces so the host can reach it
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000    # browser -> backend via host
+      API_URL_INTERNAL: http://backend:8000          # SSR inside the container -> backend service
+      DATABASE_URL: postgresql://gitly:gitly@postgres:5432/gitly
+      WATCHPACK_POLLING: "true"                       # reliable file-watching over the bind mount
+    volumes:
+      - ./frontend:/app          # live-mount source for hot reload (no rebuild per edit)
+      - /app/node_modules        # keep the image's installed deps
+      - /app/.next               # keep the container's build cache
+    ports: ["3000:3000"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:
