@@ -1,0 +1,13 @@
+{
+  "name": "gitly",
+  "description": "Git-quality copilot: commit cleanly, absorb fixes into the right commit, shrink megaPRs, read diffs, and trace AI authorship — without leaving your agent.",
+  "version": "0.1.0",
+  "author": { "name": "gitly" },
+  "mcpServers": {
+    "gitly": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist/index.js"],
+      "env": { "GITLY_API_URL": "${GITLY_API_URL:-http://localhost:8000}" }
+    }
+  }
+}

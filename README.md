@@ -115,9 +115,9 @@ Stop with `make down`.
 The `trace` dashboard reads from Postgres. Populate it with realistic fake provenance:
 
 ```bash
-make seed                                          # 60 records into repo "demo-app"
-# or:
-python3 scripts/seed_demo.py --repo my-app --count 120 --seed 7
+make seed                            # structured demo: real files with per-line authorship
+# or a different repo name:
+python3 scripts/seed_demo.py --repo my-app
 ```
 
 Then open **http://localhost:3000/trace?repo=demo-app**. The seeder is stdlib-only, **idempotent** (same `--seed` upserts, no duplicates), and posts through the real `POST /trace/records` ingest path (one record carries a planted key to demonstrate server-side redaction).
@@ -155,7 +155,7 @@ gitly lens <file.diff>              # (stub — engine port pending)
 
 ## The MCP server (Claude Code / Cursor)
 
-A pure-Node stdio server in [`sdk/mcp/`](sdk/mcp/README.md) that composes local git + the gitly backend + the provenance ledger into 7 opinionated tools: `gitly_status`, `gitly_scan_secrets`, `gitly_explain_diff`, `gitly_safe_commit`, `gitly_trace_summary`, `gitly_record_authorship`, `gitly_shrink`.
+A pure-Node stdio server in [`sdk/mcp/`](sdk/mcp/README.md) that composes local git + the gitly backend + the provenance ledger into 8 opinionated tools: `gitly_status`, `gitly_scan_secrets`, `gitly_explain_diff`, `gitly_safe_commit`, `gitly_absorb`, `gitly_trace_summary`, `gitly_record_authorship`, `gitly_shrink`.
 
 ```bash
 cd sdk/mcp && npm install && npm run build      # -> dist/
@@ -165,6 +165,21 @@ claude mcp add gitly -- node /absolute/path/to/gitly/sdk/mcp/dist/index.js
 ```
 
 Then: *"gitly, is this change too big?"* · *"commit this cleanly with gitly"* · *"gitly trace summary"*. Point at a non-default backend with `GITLY_API_URL`. Full details: [`sdk/mcp/README.md`](sdk/mcp/README.md).
+
+---
+
+## Claude Code plugin
+
+The repo root is also a **Claude Code plugin** ([`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)) that bundles the MCP server, slash commands, and the authorship-capture hook in one install (`claude plugin validate` passes):
+
+```bash
+cd sdk/mcp && npm run build          # build the bundled MCP server once
+claude --plugin-dir /absolute/path/to/gitly     # load the plugin for a session
+```
+
+- **Slash commands** ([`commands/`](commands)): `/gitly:commit`, `/gitly:absorb`, `/gitly:scan`, `/gitly:shrink`, `/gitly:lens`, `/gitly:trace`.
+- **MCP server**: the 8 tools above, launched from `${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist`.
+- **Hook** ([`hooks/hooks.json`](hooks/hooks.json)): a `PostToolUse(Edit|Write)` hook records AI authorship to the local ledger (feeds `gitly trace`).
 
 ---
 
@@ -258,7 +273,7 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (7 tools) · provenance SDK + capture hook.
+**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook.
 
 **Next:**
 1. Finish copilot `commit`/`absorb`/`checkpoint` behind the MCP.
