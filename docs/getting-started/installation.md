@@ -35,6 +35,13 @@ Usage: gitly [OPTIONS] COMMAND [ARGS]...
   gitly — git-quality tooling for the AI-authorship era.
 ```
 
+Then set it up in a repo (installs the secret-blocking pre-commit hook):
+
+```bash
+cd your-repo
+gitly init          # add --claude-code to also capture AI authorship
+```
+
 ## The intelligence (optional)
 
 `gitly commit` can write your commit messages and split commits using an LLM. This is

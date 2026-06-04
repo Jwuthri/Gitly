@@ -12,6 +12,27 @@ completeness check, secrets found, …), so they compose in scripts and hooks.
 
 ---
 
+## `gitly init`
+
+Set up gitly in the current repo: install the secret-blocking **pre-commit** hook (and,
+with `--claude-code`, the authorship-capture hook).
+
+```bash
+gitly init [--claude-code] [--force] [--repo PATH]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--claude-code` | Also register the Claude Code `PostToolUse` authorship-capture hook in `.claude/settings.json`. |
+| `--force` | Replace an existing **non-gitly** pre-commit hook (backs it up to `pre-commit.bak`). |
+| `--repo PATH` | Operate on another repo. |
+
+Idempotent — re-running updates gitly's own hook in place. The installed hook calls
+`gitly scan --staged` (with a regex fallback if `gitly` isn't on `PATH`). See
+[Git hooks](../integrations/hooks.md).
+
+---
+
 ## `gitly commit`
 
 Stage safe files, block on secrets, refuse protected branches, and commit — auto-writing a
@@ -136,10 +157,18 @@ Exits **1** if the completeness check fails. Full guide: [Shrink](../pillars/shr
 
 ## `gitly lens`
 
+Cluster a unified diff into conceptual change cards (renames, insertions, outliers).
+
 ```bash
-gitly lens FILE.diff
+gitly lens [FILE] [--sites] [--json]
+git diff main | gitly lens          # reads stdin when FILE is omitted or '-'
 ```
 
-!!! note
-    The CLI subcommand is currently a stub — the lens **engine** is live behind the HTTP
-    API and the commit-message heuristic. See [Lens](../pillars/lens.md).
+| Argument / flag | Meaning |
+|---|---|
+| `FILE` | A `.diff` file to analyze. Omit (or pass `-`) to read a diff from stdin. |
+| `--sites` | List each cluster's individual change sites (`file:line`). |
+| `--json` | Emit the raw `AnalysisResult` as JSON. |
+
+Exits **1** on an unreadable file, empty input, or an unparseable diff. Full guide:
+[Lens](../pillars/lens.md).

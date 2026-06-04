@@ -151,7 +151,8 @@ gitly commit --split         # break the working tree into several logical commi
 gitly commit --path src/a.py # stage only the path(s) you name
 gitly absorb                 # fold uncommitted edits into the earlier commit(s) they belong to (fixup + autosquash)
 
-# --- the "brain" (where messages & splits come from) ---
+# --- setup & the "brain" (where messages & splits come from) ---
+gitly init                   # install the secret-blocking pre-commit hook (--claude-code adds capture)
 gitly auth                   # one-time setup: Claude Code (zero-config) / OpenAI / Anthropic / offline
 gitly config                 # show the active provider + key sources (values are never printed)
 
@@ -161,7 +162,7 @@ gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin
 gitly shrink <base> <head> --repo .  # split a PR into a VERIFIED stack (materialize + tree-equality)
-gitly lens <file.diff>              # (CLI stub — the engine itself is live behind the API & commit messages)
+git diff main | gitly lens         # cluster a diff into conceptual cards (renames / insertions / outliers)
 ```
 
 **Intelligence, with zero config.** `gitly commit` writes the conventional-commit message for you, and `--split` carves a sprawling working tree into independently-reviewable commits. The "brain" resolves a provider in this order: an explicit one (`GITLY_LLM_PROVIDER` / `gitly auth`) → an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (real env **or your project's `.env`**) → your local **Claude Code** CLI (`claude -p` — no key at all) → a fully offline heuristic (the lens engine). Run `gitly auth` once to choose; there's nothing to configure if Claude Code is installed.
@@ -290,10 +291,10 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · secret firewall · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook.
+**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant; **CLI + API**) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · **`gitly init`** (one-command hook install) · secret firewall (entropy-FP gate + `gitly:allow` allowlist) · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook · **docs site** (Material for MkDocs → GitHub Pages) · **CI** (ruff + pytest, 44 tests).
 
 **Next:**
-1. Surface `commit --split` / `absorb` as MCP tools (the CLI is live; mirror it for the agent).
+1. Surface `commit` / `--split` / `absorb` as MCP tools (the CLI is live; mirror it for the agent).
 2. Shrink: GitHub-App worker (clone → open stacked PRs) + squash-merge stack reconciliation + the Docker validation sandbox.
 3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
-4. A dedicated docs site.
+4. Distribution: publish `gitly` to PyPI + the MCP server to npm.

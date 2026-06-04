@@ -30,21 +30,30 @@ high-confidence rename cluster becomes a `refactor:` message, for instance.
 
 ## Try it
 
-The interactive analyzer lives on the web UI at **`/lens`**, wired to the backend:
+From the terminal — point it at a diff file or pipe one in:
+
+```console
+$ git diff main | gitly lens --sites
+lens analysis
+  2 files  +2/-2  2 hunks  ->  1 clusters
+
+  ● rename: Renamed `old_name` → `new_name`   [2 sites / 2 files]  (high)
+      Same substitution at 2 sites across 2 files.
+        · a.py:1
+        · b.py:1
+```
+
+`--json` emits the raw `AnalysisResult`; `--sites` lists every occurrence. See the
+[CLI reference](../reference/cli.md#gitly-lens).
+
+The same engine powers the interactive analyzer on the web UI at **`/lens`** and the
+HTTP API:
 
 ```bash
 curl -s localhost:8000/lens/analyze \
   -H 'content-type: application/json' \
   -d '{"diff": "<unified diff>"}'
 ```
-
-The response is the file/hunk skeleton plus the clusters (kind, title, confidence, the
-sites each one covers).
-
-!!! note "CLI status"
-    `gitly lens <file.diff>` is currently a stub that points at the migration notes — the
-    **engine itself is live** behind the HTTP API and inside the commit-message heuristic.
-    The standalone CLI subcommand is on the roadmap.
 
 ## Lineage
 
