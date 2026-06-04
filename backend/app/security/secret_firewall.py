@@ -30,6 +30,16 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 _HIGH_ENTROPY_TOKEN = re.compile(r"[A-Za-z0-9+/=_\-]{24,}")
 
 
+def _looks_random(tok: str) -> bool:
+    """A heuristic gate for the entropy layer: real secret material (keys, tokens, hashes)
+    mixes **letters and digits**. Identifiers, file paths, and dictionary phrases —
+    ``fontawesome/brands/github``, ``GITLY_PROVENANCE_SYNC``, ``getting-started/installation``
+    — usually don't, yet are long enough to clear the entropy bar and fire as false
+    positives. Requiring both classes removes the bulk of those FPs; the precise
+    ``PATTERNS`` layer below still catches known secret formats regardless of this gate."""
+    return any(c.isalpha() for c in tok) and any(c.isdigit() for c in tok)
+
+
 @dataclass(frozen=True)
 class Finding:
     kind: str
@@ -44,10 +54,20 @@ def _shannon_entropy(s: str) -> float:
     return -sum((c / n) * math.log2(c / n) for c in (s.count(ch) for ch in set(s)))
 
 
-def scan(text: str, *, entropy_threshold: float = 4.0) -> list[Finding]:
+# Inline allowlist — like `# gitleaks:allow` / `# pragma: allowlist secret`. A line carrying
+# this marker is exempt from the commit gate (test fixtures, docs that show example keys).
+_ALLOW_MARKER = re.compile(r"(?i)gitly[:\-]allow\b|pragma:\s*allowlist\s+secret")
+
+
+def scan(text: str, *, entropy_threshold: float = 4.0, honor_allowlist: bool = True) -> list[Finding]:
+    """Return secret findings. ``honor_allowlist`` (default) skips lines marked with an
+    allowlist pragma — used by the *commit gate*. Redaction passes ``honor_allowlist=False``
+    so secrets are stripped before any LLM call regardless of pragmas (never-leak wins)."""
     findings: list[Finding] = []
     seen: set[tuple[int, str]] = set()
     for i, line in enumerate(text.splitlines(), start=1):
+        if honor_allowlist and _ALLOW_MARKER.search(line):
+            continue
         for kind, pat in PATTERNS.items():
             for m in pat.finditer(line):
                 key = (i, m.group(0))
@@ -57,7 +77,9 @@ def scan(text: str, *, entropy_threshold: float = 4.0) -> list[Finding]:
         # entropy layer — catch high-entropy blobs the patterns miss
         for tok in _HIGH_ENTROPY_TOKEN.findall(line):
             key = (i, tok)
-            if key not in seen and _shannon_entropy(tok) >= entropy_threshold:
+            if key in seen or not _looks_random(tok):
+                continue
+            if _shannon_entropy(tok) >= entropy_threshold:
                 seen.add(key)
                 findings.append(Finding(kind="high_entropy", line_no=i, match=tok))
     return findings
@@ -67,7 +89,7 @@ def redact(text: str) -> str:
     """Replace every detected secret with a typed placeholder. Call before any LLM
     request or before persisting a prompt/diff."""
     out = text
-    for f in scan(text):
+    for f in scan(text, honor_allowlist=False):  # redact everything, pragmas notwithstanding
         out = out.replace(f.match, f"‹redacted:{f.kind}›")
     return out
 
