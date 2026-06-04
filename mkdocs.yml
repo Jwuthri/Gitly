@@ -96,3 +96,4 @@ nav:
       - Configuration: reference/configuration.md
   - Security: security.md
   - Architecture: architecture.md
+  - Contributing: contributing.md
