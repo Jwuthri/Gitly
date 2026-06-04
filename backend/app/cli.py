@@ -1,6 +1,7 @@
 """gitly CLI — `gitly trace`, `gitly scan`, plus seams for `shrink` / `lens`."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -138,6 +139,144 @@ def shrink(
 def lens(file: str = typer.Argument(..., help="Path to a unified .diff file")):
     """Cluster a diff into conceptual change cards. (engine ports from pr-visual-diff)"""
     typer.echo("lens: engine port pending — see MIGRATION.md (../pr-visual-diff)")
+
+
+@app.command()
+def commit(
+    message_arg: str = typer.Argument(None, metavar="[MESSAGE]", help="Commit message (omit to auto-generate from the diff)"),
+    message: str = typer.Option(None, "-m", "--message", help="Commit message, git-style (alias for the positional)"),
+    all: bool = typer.Option(False, "--all", "-a", help="Stage all changes, including untracked files"),
+    path: list[str] = typer.Option(None, "--path", help="Stage only these path(s) (repeatable)"),
+    split: bool = typer.Option(False, "--split", help="Auto-split the working tree into several logical commits"),
+    llm: bool = typer.Option(False, "--llm", help="Force the LLM to write the message(s)"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Never call an LLM — use the offline heuristic"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Commit cleanly: stage safe files, block on secrets, refuse on a protected branch.
+
+    Pass a message as `-m "..."` (git-style) or positionally; omit it and gitly writes a
+    conventional one from the diff — via your configured brain (see `gitly auth`) or, with
+    none, an offline heuristic. Use --split to break a big working tree into several
+    independently-reviewable commits.
+
+    The safe-add guard never stages .env / keys / build junk; pass them with --path
+    only if you truly mean to."""
+    from backend.app.engines.copilot.ops import GitError, safe_commit, split_commit
+
+    cwd = repo if repo != "." else str(_repo_root())
+    mode = "off" if no_llm else "llm" if llm else "auto"
+    text = message or message_arg
+
+    try:
+        if split:
+            ok, lines = split_commit(cwd, stage_all=all, msg_mode=mode)
+            typer.secho("Split into commits:" if ok else "Could not split:", fg="green" if ok else "red", err=not ok)
+            for ln in lines:
+                typer.echo(ln)
+            raise typer.Exit(0 if ok else 1)
+        ok, msg = safe_commit(cwd, text, stage_all=all, paths=path, msg_mode=mode)
+    except GitError as e:
+        typer.secho(f"git error: {e}", fg="red", err=True)
+        raise typer.Exit(1)
+    typer.secho(msg, fg="green" if ok else "red", err=not ok)
+    raise typer.Exit(0 if ok else 1)
+
+
+@app.command()
+def absorb(
+    into: str = typer.Option(None, "--into", help="Commit ref to absorb every change into"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Fold uncommitted changes into the commit(s) they belong to and re-stack."""
+    from backend.app.engines.copilot.ops import GitError
+    from backend.app.engines.copilot.ops import absorb as run_absorb
+
+    try:
+        ok, msg = run_absorb(repo if repo != "." else str(_repo_root()), into)
+    except GitError as e:
+        typer.secho(f"git error: {e}", fg="red", err=True)
+        raise typer.Exit(1)
+    typer.secho(msg, fg="green" if ok else "red", err=not ok)
+    raise typer.Exit(0 if ok else 1)
+
+
+def _show_brain(brain) -> None:
+    cfg = brain.load_config()
+    active = brain.provider()  # also loads the nearest .env
+    sources: list[str] = []
+    if os.environ.get("OPENAI_API_KEY"):
+        sources.append("OPENAI_API_KEY (env/.env)")
+    if cfg.get("openai_key"):
+        sources.append("openai_key (config)")
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GITLY_ANTHROPIC_API_KEY"):
+        sources.append("ANTHROPIC_API_KEY (env)")
+    if cfg.get("anthropic_key"):
+        sources.append("anthropic_key (config)")
+    typer.echo(f"active provider : {active}")
+    typer.echo(f"claude code     : {'available' if brain.has_claude_code() else 'not found'}")
+    typer.echo(f"api keys        : {', '.join(sources) if sources else 'none'} (never displayed, never committed)")
+    exists = brain.CONFIG_PATH.exists()
+    typer.echo(f"config file     : {brain.CONFIG_PATH}{'' if exists else ' (not created yet)'}")
+
+
+@app.command()
+def auth(
+    provider: str = typer.Option(None, "--provider", help="claude-code | openai | anthropic | heuristic"),
+    key: str = typer.Option(None, "--key", help="API key for openai/anthropic (omit to be prompted securely)"),
+    show: bool = typer.Option(False, "--show", help="Just show the active brain and exit"),
+):
+    """Set up the gitly 'brain' once — used for commit messages & semantic splitting.
+
+    Zero-config if Claude Code is installed (no key needed). Otherwise drop in an
+    OpenAI/Anthropic key — stored at ~/.config/gitly/config.json (chmod 600), or just
+    leave it in your project's .env. Keys go ONLY to that provider, and every diff is
+    secret-redacted before it's sent."""
+    from backend.app.engines.copilot import brain
+
+    brain._load_dotenv()  # so a key already sitting in the project's .env is detected below
+
+    if show:
+        _show_brain(brain)
+        return
+
+    if not provider:
+        has_cc = brain.has_claude_code()
+        typer.echo("gitly brain — how should I write commit messages & splits?\n")
+        typer.echo(f"  1. claude-code   {'(detected)' if has_cc else '(not found)'}  — zero-config, uses your Claude Code CLI")
+        typer.echo("  2. openai        — needs an API key (sk-…)")
+        typer.echo("  3. anthropic     — needs an API key (sk-ant-…)")
+        typer.echo("  4. heuristic     — fully offline, no LLM\n")
+        choice = typer.prompt("Choose [1-4]", default="1" if has_cc else "2").strip().lower()
+        provider = {"1": "claude-code", "2": "openai", "3": "anthropic", "4": "heuristic"}.get(choice, choice)
+
+    if provider not in {"claude-code", "openai", "anthropic", "heuristic"}:
+        typer.secho(f"Unknown provider '{provider}'.", fg="red", err=True)
+        raise typer.Exit(1)
+
+    cfg = brain.load_config()
+    cfg["provider"] = provider
+
+    if provider in {"openai", "anthropic"}:
+        env_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+        if not key and os.environ.get(env_name):
+            typer.secho(f"Found {env_name} in your environment/.env — using that, nothing stored.", fg="green")
+        else:
+            if not key:
+                key = typer.prompt(f"{provider} API key", hide_input=True)
+            cfg["openai_key" if provider == "openai" else "anthropic_key"] = key.strip()
+    elif provider == "claude-code" and not brain.has_claude_code():
+        typer.secho("! 'claude' not on PATH — install Claude Code, or pick another provider.", fg="yellow", err=True)
+
+    brain.save_config(cfg)
+    typer.secho(f"\nSaved -> active provider: {brain.provider()}", fg="green")
+
+
+@app.command()
+def config():
+    """Show the gitly brain configuration (provider + key sources; values never printed)."""
+    from backend.app.engines.copilot import brain
+
+    _show_brain(brain)
 
 
 def main() -> None:

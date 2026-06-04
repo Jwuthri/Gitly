@@ -23,3 +23,7 @@ out/
 
 # gitly local provenance cache (bound records are synced to the DB instead)
 .gitly/cache/
+
+# docs (MkDocs build output)
+site/
+.cache/

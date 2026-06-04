@@ -20,6 +20,7 @@ adds the best-practices layer + the gitly engines on top.
 | `gitly_trace_summary` | AI-authorship rollup for a repo: % AI vs human, by model, unreviewed-AI lines. |
 | `gitly_record_authorship` | Record that an AI wrote a span (feeds `gitly trace`); the prompt is secret-redacted first. |
 | `gitly_shrink` | Propose splitting a large change into a verified stack of small sub-PRs. |
+| `gitly_absorb` | Fold working changes into the right earlier commit(s) and re-stack (Sapling-style). Refuses on protected/pushed history; aborts cleanly on conflict. |
 
 ## Build & run
 
