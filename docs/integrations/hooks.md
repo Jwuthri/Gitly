@@ -8,9 +8,11 @@ authorship as your agent works.
 The easiest way — one command, from inside the repo:
 
 ```bash
-gitly init                 # installs the secret-blocking pre-commit hook
+gitly init                 # installs the pre-commit (secret block) + post-commit (authorship bind) hooks
 gitly init --claude-code   # …and registers the Claude Code authorship-capture hook
 ```
+
+The **`post-commit`** hook runs [`gitly bind`](../reference/cli.md#gitly-bind) after each commit — non-blocking and silent — so `gitly trace` can show real edit ratios offline.
 
 It's idempotent, and won't clobber an existing non-gitly `pre-commit` hook without
 `--force` (which backs the old one up). Prefer this over the manual steps below. See the
