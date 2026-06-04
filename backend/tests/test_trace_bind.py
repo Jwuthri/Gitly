@@ -6,11 +6,15 @@ import subprocess
 from datetime import UTC, datetime
 
 import pytest
+from typer.testing import CliRunner
 
 from shared.schema.provenance import AgentKind, AuthorType, ProvenanceEvent
+from backend.app.cli import app
 from backend.app.engines.trace import recorder
 from backend.app.engines.trace.binder import _committed_region, bind_head
 from backend.app.engines.trace.blame import trace_file
+
+runner = CliRunner()
 
 
 def _git(cwd, *a) -> str:
@@ -82,6 +86,13 @@ def test_trace_file_prefers_bound_records(repo):
     assert ai, "expected AI-attributed lines from the bound record"
     assert ai[0].model == "claude-sonnet-4-6"
     assert all(not ln.inferred for ln in ai)             # recorded, not inferred
+
+
+def test_trace_untracked_file_is_clean_error(repo, monkeypatch):
+    monkeypatch.chdir(repo)
+    r = runner.invoke(app, ["trace", "does_not_exist.py"])
+    assert r.exit_code == 1
+    assert "Can't trace" in r.output            # friendly message, not a traceback
 
 
 def test_bind_skips_files_absent_from_commit(repo):

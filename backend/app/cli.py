@@ -74,7 +74,13 @@ def trace_default(
                 continue
         typer.echo(_render_summary(summarize(all_lines, repo=root.name)))
         return
-    for ln in trace_file(root, file):
+    try:
+        lines = trace_file(root, file)
+    except subprocess.CalledProcessError:
+        typer.secho(f"Can't trace '{file}' — it isn't a tracked file in {root.name} "
+                    "(check the path, and make sure it's committed).", fg="red", err=True)
+        raise typer.Exit(1)
+    for ln in lines:
         typer.echo(f"{ln.line_no:>5}  {_tag(ln):<26} {ln.content}")
 
 
