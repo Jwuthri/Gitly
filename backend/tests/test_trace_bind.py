@@ -98,6 +98,9 @@ def test_trace_untracked_file_is_clean_error(repo, monkeypatch):
 def test_agentkind_normalizes_unknown_values():
     assert AgentKind("my-tool") is AgentKind.unknown   # arbitrary tool name → unknown, never raises
     assert AgentKind("cursor") is AgentKind.cursor
+    assert AgentKind("antigravity") is AgentKind.antigravity
+    assert AgentKind("kiro") is AgentKind.kiro
+    assert AgentKind("continue") is AgentKind.continue_
 
 
 def test_read_events_tolerates_arbitrary_agent_and_garbage(repo):

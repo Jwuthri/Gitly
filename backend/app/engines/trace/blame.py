@@ -14,11 +14,22 @@ from shared.schema.provenance import AgentKind, AuthorType, TraceLine, TraceSumm
 from backend.app.engines.trace.recorder import read_events, read_records
 
 _AI_TRAILERS = {
+    # more-specific needles first — first match wins
+    "openai codex": AgentKind.openai_codex,
+    "sourcegraph cody": AgentKind.cody,
+    "kiro": AgentKind.kiro,
+    "jetbrains ai": AgentKind.jetbrains_ai,
     "claude": AgentKind.claude_code,
     "cursor": AgentKind.cursor,
     "copilot": AgentKind.copilot,
     "aider": AgentKind.aider,
     "windsurf": AgentKind.windsurf,
+    "antigravity": AgentKind.antigravity,
+    "lovable": AgentKind.lovable,
+    "gemini": AgentKind.gemini,
+    "devin": AgentKind.devin,
+    "replit": AgentKind.replit,
+    "tabnine": AgentKind.tabnine,
 }
 
 

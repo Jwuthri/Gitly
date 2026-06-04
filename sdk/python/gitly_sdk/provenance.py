@@ -31,7 +31,12 @@ _PATTERNS = [
 
 # Agent identifiers the `gitly trace` schema understands; anything else is recorded as
 # "unknown" so an arbitrary tool name can never produce an unreadable ledger.
-_KNOWN_AGENTS = {"claude_code", "cursor", "copilot", "windsurf", "aider", "unknown"}
+_KNOWN_AGENTS = {
+    "claude_code", "cursor", "copilot", "windsurf", "aider",
+    "openai_codex", "antigravity", "kiro", "lovable", "gemini",
+    "continue", "cody", "devin", "replit", "tabnine", "jetbrains_ai",
+    "unknown",
+}
 
 
 def redact(text: str | None) -> str | None:
@@ -65,7 +70,7 @@ def record_authorship(
     *,
     proposed_text: str = "",
     model: str | None = None,
-    agent: str = "unknown",   # claude_code | cursor | copilot | windsurf | aider | unknown
+    agent: str = "unknown",   # AgentKind slug — see shared.schema.provenance.AgentKind
     prompt: str | None = None,
     session_id: str | None = None,
     repo_root: str | None = None,

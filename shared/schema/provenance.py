@@ -24,6 +24,17 @@ class AgentKind(str, Enum):
     copilot = "copilot"
     windsurf = "windsurf"
     aider = "aider"
+    openai_codex = "openai_codex"
+    antigravity = "antigravity"
+    kiro = "kiro"
+    lovable = "lovable"
+    gemini = "gemini"
+    continue_ = "continue"
+    cody = "cody"
+    devin = "devin"
+    replit = "replit"
+    tabnine = "tabnine"
+    jetbrains_ai = "jetbrains_ai"
     unknown = "unknown"
 
     @classmethod
