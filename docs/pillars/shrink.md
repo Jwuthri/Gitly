@@ -1,0 +1,92 @@
+# Shrink — split big PRs
+
+> Turn an unreviewable megaPR into a dependency-ordered stack of small sub-PRs — with a
+> **verified** completeness guarantee.
+
+Large PRs don't get reviewed; they get rubber-stamped. `shrink` takes a range
+(`base..head`) and proposes a **stack of small slices**, each a coherent unit, ordered so
+dependencies come first — then proves the stack reconstructs your tree *exactly*.
+
+```bash
+gitly shrink <base> [head] [OPTIONS]
+```
+
+```console
+$ gitly shrink main HEAD --strength balanced
+1320 lines / 18 files  ->  4 slices
+  #1  chore: bump dependencies        [40 ln / 2 files]
+  #2  feat: rate-limiter core         [220 ln / 5 files]  (after #1)
+  #3  feat: wire limiter into API     [180 ln / 6 files]  (after #2)
+  #4  test: cover the limiter         [90 ln / 5 files]   (after #2)
+ok: completeness verified — tree(base + slices) == tree(head)
+```
+
+## How it works
+
+```
+parse  →  plan  →  materialize  →  verify
+```
+
+1. **Parse** the unified diff into files and hunks (on the shared `diff_core` kernel).
+2. **Plan** — group hunks by category and module, infer dependencies, and compute a
+   topological order with `networkx` so each slice only depends on earlier ones.
+3. **Materialize** — build the commit stack with git plumbing (one commit per slice).
+4. **Verify** — the crown jewel: gitly checks `tree(base + slices) == tree(head)` by exact
+   **git tree-ID equality**. If the stack doesn't reproduce your head tree byte-for-byte,
+   it is **not shipped**.
+
+!!! success "Completeness is proven, not promised"
+    The completeness check is a hard gate. A passing run means: apply these slices on
+    `base`, in order, and you land on precisely `head` — nothing dropped, nothing extra.
+
+## Strength
+
+Tune how aggressively the branch is sliced:
+
+| `--strength` | Max lines / slice | Min lines | Max slices |
+|---|---|---|---|
+| `gentle` | 1500 | 300 | 2 |
+| `balanced` *(default)* | 400 | 40 | 6 |
+| `aggressive` | 120 | 1 | 20 |
+
+```bash
+gitly shrink main HEAD --strength aggressive
+gitly shrink main HEAD --max-lines 250        # override the line cap directly
+```
+
+## Options
+
+| Flag | Meaning |
+|---|---|
+| `base` (positional, required) | Base ref, e.g. `main`. |
+| `head` (positional) | Head ref (default `HEAD`). |
+| `--strength` | `gentle` \| `balanced` \| `aggressive`. |
+| `--max-lines N` | Override the per-slice line cap (`0` = use `--strength`). |
+| `--write-refs` | Create `shrink/*` branches for each materialized slice. |
+| `--llm` | Use the LLM labeler for slice titles/intent (redacted first). |
+| `--repo PATH` | Path to the git repo. |
+
+With `--write-refs`, gitly prints the created branch and commit for each slice so you can
+push them as a stack.
+
+## Over HTTP
+
+The planning step is also exposed by the backend, so a UI (or your agent) can preview a
+stack from a raw diff without touching git:
+
+```bash
+curl -s localhost:8000/shrink/analyze \
+  -H 'content-type: application/json' \
+  -d '{"diff": "<unified diff>", "strength": "balanced"}'
+```
+
+A malformed diff returns **400** (the planner uses a strict hunk parser). To run a full
+materialize+verify asynchronously, enqueue a job:
+
+```bash
+curl -s localhost:8000/shrink/jobs \
+  -H 'content-type: application/json' \
+  -d '{"repo": "...", "base": "main", "head": "HEAD", "max_lines": 400}'
+```
+
+See the [HTTP API reference](../reference/api.md) for the full surface.

@@ -26,6 +26,7 @@ server = [
 ]
 llm = ["anthropic>=0.34"]          # optional, opt-in intent labels / commit messages
 dev = ["pytest>=8", "ruff>=0.5"]
+docs = ["mkdocs-material>=9.5"]    # the documentation site (mkdocs.yml + docs/)
 
 [project.scripts]
 gitly = "backend.app.cli:main"

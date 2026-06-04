@@ -1,4 +1,4 @@
-.PHONY: install api worker web test fmt seed up down
+.PHONY: install api worker web test fmt seed up down docs docs-serve docs-build
 
 install:
 	python -m venv .venv && . .venv/bin/activate && pip install -e ".[server,dev,llm]"
@@ -27,3 +27,11 @@ up:
 
 down:
 	docker compose down
+
+docs: docs-serve         # alias
+
+docs-serve:              # live-reload docs at http://localhost:8001
+	mkdocs serve -a localhost:8001
+
+docs-build:              # strict build into ./site (fails on broken links/nav)
+	mkdocs build --strict

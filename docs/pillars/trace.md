@@ -1,0 +1,77 @@
+# Trace — AI authorship provenance
+
+> `git blame` tells you who *typed* it. `gitly trace` tells you who — or what — actually
+> *wrote* it.
+
+As more code is written by agents, "who wrote this?" stops meaning "who typed it." `trace`
+is git-native AI-authorship provenance: a record of **which model or agent wrote which
+line, from which prompt, how much a human changed it, and whether it's been reviewed** —
+surfaced as a blame-style CLI and a web dashboard.
+
+## The CLI
+
+=== "Per-line"
+
+    ```console
+    $ gitly trace app/api.py
+        1  human                       import os
+        2  AI:claude-sonnet-4 !unreviewed   def rate_limit(request):
+        3  AI:claude-sonnet-4~          return _check(request)
+    ```
+
+    Each line is tagged:
+
+    - `human` — written by a person.
+    - `AI:<model>` — written by a model/agent. A trailing `~` means **inferred** (not
+      explicitly recorded), and `!unreviewed` flags AI lines a human hasn't signed off on.
+
+=== "Repo summary"
+
+    ```console
+    $ gitly trace --summary
+    repo: my-app
+    lines: 4120   ai: 2890 (70%)   human: 1100   hybrid: 130
+    unreviewed AI lines: 410
+    by model: claude-sonnet-4=2100, gpt-4o=790
+    ```
+
+## How provenance is captured
+
+```
+agent edit → capture hook → redacted event → local ledger → (opt-in) Postgres → trace
+```
+
+1. An agent edits a file (e.g. via Claude Code or the MCP server).
+2. A **`PostToolUse` capture hook** records the authorship event.
+3. The event — **with its prompt secret-redacted** — is written to a local ledger at
+   `.gitly/provenance/*.jsonl`.
+4. `gitly trace` (and the dashboard) **join that ledger with `git blame`** to attribute
+   each surviving line.
+5. Optionally (`GITLY_PROVENANCE_SYNC=true`) records sync to Postgres for the dashboard;
+   the server **re-redacts** prompts on ingest as a second gate.
+
+!!! shield "Prompts never carry secrets"
+    Provenance records store the prompt that produced the code. That prompt is redacted
+    **before it touches disk** and again **on server ingest** — see [Security](../security.md).
+
+## The dashboard
+
+The web UI at **`/trace`** turns the ledger into:
+
+- stat cards (% AI, human, hybrid; unreviewed-AI count),
+- an authorship bar and per-model breakdown,
+- a **file tree** you can click into, and a **git-blame-style view** showing per-line
+  authorship for the selected file.
+
+Seed realistic demo data to explore it:
+
+```bash
+make seed                                # idempotent; posts via the real ingest path
+# then open http://localhost:3000/trace?repo=demo-app
+```
+
+## Recording from code
+
+The dependency-free `gitly_sdk` (in `sdk/python/`) lets a tool record authorship directly;
+the MCP tool `gitly_record_authorship` does the same from inside an agent. Both write the
+same redacted ledger that `gitly trace` reads.

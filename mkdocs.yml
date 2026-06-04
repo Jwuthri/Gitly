@@ -1,0 +1,98 @@
+site_name: gitly
+site_description: >-
+  Git-quality tooling for the AI-authorship era — commit cleanly, shrink megaPRs,
+  read diffs, and trace who really wrote the code.
+site_url: https://jwuthri.github.io/Gitly/
+repo_url: https://github.com/Jwuthri/Gitly
+repo_name: Jwuthri/Gitly
+edit_uri: edit/master/docs/
+copyright: gitly — built for the AI-authorship era.
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/source-branch
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+    - search.share
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Jwuthri/Gitly
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - The four pillars:
+      - "Copilot — commit & absorb": pillars/copilot.md
+      - "Shrink — split big PRs": pillars/shrink.md
+      - "Lens — read diffs": pillars/lens.md
+      - "Trace — AI provenance": pillars/trace.md
+  - Integrations:
+      - MCP & Claude Code: integrations/mcp.md
+      - Git hooks: integrations/hooks.md
+  - Reference:
+      - CLI: reference/cli.md
+      - HTTP API: reference/api.md
+      - Configuration: reference/configuration.md
+  - Security: security.md
+  - Architecture: architecture.md
