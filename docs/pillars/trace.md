@@ -38,17 +38,24 @@ surfaced as a blame-style CLI and a web dashboard.
 ## How provenance is captured
 
 ```
-agent edit → capture hook → redacted event → local ledger → (opt-in) Postgres → trace
+agent edit → capture hook → redacted event → local ledger
+   → (post-commit) bind to commit → record  → (opt-in) Postgres → trace
 ```
 
 1. An agent edits a file (e.g. via Claude Code or the MCP server).
-2. A **`PostToolUse` capture hook** records the authorship event.
-3. The event — **with its prompt secret-redacted** — is written to a local ledger at
-   `.gitly/provenance/*.jsonl`.
-4. `gitly trace` (and the dashboard) **join that ledger with `git blame`** to attribute
-   each surviving line.
-5. Optionally (`GITLY_PROVENANCE_SYNC=true`) records sync to Postgres for the dashboard;
+2. A **`PostToolUse` capture hook** records the authorship **event** (model, agent, redacted prompt).
+3. The event is written to a local ledger at `.gitly/provenance/*.jsonl`.
+4. **At commit time**, the **`post-commit` hook** runs **`gitly bind`** (installed by `gitly init`):
+   it consumes each pending event, compares the AI's proposed text against what was actually
+   committed, and writes a commit-bound **record** with a **`human_edit_ratio`**. A span a human
+   changed by ≥ 50 % is reclassified **`hybrid`**. A `.bound` cursor guarantees no event is bound twice.
+5. `gitly trace` **joins records (then events) with `git blame`** — so it shows real edit ratios
+   and hybrid lines *offline*, no database required.
+6. Optionally (`GITLY_PROVENANCE_SYNC=true`) records sync to Postgres for the dashboard;
    the server **re-redacts** prompts on ingest as a second gate.
+
+> 🔧 **`gitly bind`** runs automatically via the hook, but you can run it by hand anytime.
+> A `hybrid` line then renders like `hybrid:claude-sonnet-4-6 (62% human)`.
 
 !!! shield "Prompts never carry secrets"
     Provenance records store the prompt that produced the code. That prompt is redacted

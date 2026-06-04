@@ -37,6 +37,8 @@ def _tag(ln) -> str:
         return "human"
     badge = ln.model or ln.agent.value
     mark = "~" if ln.inferred else ""           # ~ = inferred, not recorded
+    if ln.author_type.value == "hybrid":        # AI-written, then materially human-edited
+        return f"hybrid:{badge}{mark} ({int(round(ln.human_edit_ratio * 100))}% human)"
     rev = "" if ln.reviewed else " !unreviewed"
     return f"AI:{badge}{mark}{rev}"
 
@@ -74,6 +76,31 @@ def trace_default(
         return
     for ln in trace_file(root, file):
         typer.echo(f"{ln.line_no:>5}  {_tag(ln):<26} {ln.content}")
+
+
+@app.command("bind")
+def bind(
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+    quiet: bool = typer.Option(False, "--quiet", help="Say nothing on success (for the post-commit hook)"),
+):
+    """Bind captured AI-authorship events to the latest commit, computing the human-edit ratio.
+
+    Runs automatically via the post-commit hook `gitly init` installs; safe to run by hand.
+    This is what lets `gitly trace` show real edit ratios and hybrid lines offline."""
+    from backend.app.engines.trace.binder import bind_head
+
+    root = Path(repo if repo != "." else str(_repo_root()))
+    try:
+        sha, records = bind_head(root)
+    except Exception as e:  # never disrupt a commit
+        if not quiet:
+            typer.secho(f"bind skipped: {e}", fg="yellow", err=True)
+        return
+    if not quiet:
+        if records:
+            typer.secho(f"bound {len(records)} authorship event(s) to {sha[:8]}", fg="green")
+        else:
+            typer.echo("nothing to bind")
 
 
 @app.command()
@@ -348,6 +375,12 @@ else
 fi
 """
 
+_POST_COMMIT_HOOK = """#!/usr/bin/env bash
+# gitly post-commit hook — bind AI-authorship events to this commit. (installed by `gitly init`)
+# Non-blocking and silent: it never affects the commit that just happened.
+command -v gitly >/dev/null 2>&1 && gitly bind --quiet >/dev/null 2>&1 || true
+"""
+
 
 def _install_claude_hook(root: Path) -> str:
     """Register the authorship-capture PostToolUse hook in <root>/.claude/settings.json."""
@@ -379,8 +412,8 @@ def init(
     force: bool = typer.Option(False, "--force", help="Replace an existing non-gitly pre-commit hook (backs it up)"),
     repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
 ):
-    """Set up gitly in this repo: install the secret-blocking pre-commit hook
-    (and, with --claude-code, the authorship-capture hook)."""
+    """Set up gitly in this repo: install the secret-blocking **pre-commit** hook and the
+    authorship-binding **post-commit** hook (and, with --claude-code, the capture hook)."""
     root = Path(repo if repo != "." else str(_repo_root()))
     git_dir = root / ".git"
     if not git_dir.is_dir():
@@ -389,20 +422,27 @@ def init(
 
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    pre_commit = hooks_dir / "pre-commit"
-    done: list[str] = []
-
-    if pre_commit.exists() and "gitly" not in pre_commit.read_text(errors="ignore"):
-        if not force:
-            typer.secho(f"A non-gitly pre-commit hook already exists at {pre_commit}.\n"
+    hooks = [
+        ("pre-commit", _PRE_COMMIT_HOOK, "blocks secrets before they're committed"),
+        ("post-commit", _POST_COMMIT_HOOK, "binds AI authorship to each commit"),
+    ]
+    # guard pass — refuse to clobber a foreign hook unless --force (check all before writing any)
+    for name, _content, _desc in hooks:
+        p = hooks_dir / name
+        if p.exists() and "gitly" not in p.read_text(errors="ignore") and not force:
+            typer.secho(f"A non-gitly {name} hook already exists at {p}.\n"
                         "Re-run with --force to back it up and replace it.", fg="yellow", err=True)
             raise typer.Exit(1)
-        backup = pre_commit.with_name("pre-commit.bak")
-        pre_commit.replace(backup)
-        done.append(f"backed up your existing hook -> {backup.name}")
-    pre_commit.write_text(_PRE_COMMIT_HOOK)
-    pre_commit.chmod(0o755)
-    done.append("installed secret-blocking pre-commit hook -> .git/hooks/pre-commit")
+    done: list[str] = []
+    for name, content, desc in hooks:
+        p = hooks_dir / name
+        if p.exists() and "gitly" not in p.read_text(errors="ignore"):
+            backup = p.with_name(f"{name}.bak")
+            p.replace(backup)
+            done.append(f"backed up existing {name} -> {backup.name}")
+        p.write_text(content)
+        p.chmod(0o755)
+        done.append(f"installed {name} hook ({desc})")
 
     if claude_code:
         done.append(_install_claude_hook(root))

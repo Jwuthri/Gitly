@@ -14,8 +14,8 @@ completeness check, secrets found, …), so they compose in scripts and hooks.
 
 ## `gitly init`
 
-Set up gitly in the current repo: install the secret-blocking **pre-commit** hook (and,
-with `--claude-code`, the authorship-capture hook).
+Set up gitly in the current repo: install the secret-blocking **pre-commit** hook **and**
+the authorship-binding **post-commit** hook (and, with `--claude-code`, the capture hook).
 
 ```bash
 gitly init [--claude-code] [--force] [--repo PATH]
@@ -24,12 +24,32 @@ gitly init [--claude-code] [--force] [--repo PATH]
 | Flag | Meaning |
 |---|---|
 | `--claude-code` | Also register the Claude Code `PostToolUse` authorship-capture hook in `.claude/settings.json`. |
-| `--force` | Replace an existing **non-gitly** pre-commit hook (backs it up to `pre-commit.bak`). |
+| `--force` | Replace existing **non-gitly** hooks (backs each up to `*.bak`). |
 | `--repo PATH` | Operate on another repo. |
 
-Idempotent — re-running updates gitly's own hook in place. The installed hook calls
-`gitly scan --staged` (with a regex fallback if `gitly` isn't on `PATH`). See
-[Git hooks](../integrations/hooks.md).
+Idempotent — re-running updates gitly's own hooks in place. `pre-commit` calls
+`gitly scan --staged` (regex fallback if `gitly` isn't on `PATH`); `post-commit` calls
+`gitly bind`. See [Git hooks](../integrations/hooks.md).
+
+---
+
+## `gitly bind`
+
+Bind captured AI-authorship events to the latest commit, computing each span's
+`human_edit_ratio` and reclassifying heavily-edited AI spans as `hybrid`.
+
+```bash
+gitly bind [--quiet] [--repo PATH]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--quiet` | Say nothing on success (used by the `post-commit` hook). |
+| `--repo PATH` | Operate on another repo. |
+
+Runs automatically via the `post-commit` hook `gitly init` installs — this is what lets
+`gitly trace` show real edit ratios and hybrid lines offline. A `.bound` cursor ensures an
+event is never bound twice. See [Trace](../pillars/trace.md).
 
 ---
 

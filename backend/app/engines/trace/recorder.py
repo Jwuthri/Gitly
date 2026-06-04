@@ -43,11 +43,54 @@ def read_events(repo_root: Path, *, ledger: str = ".gitly/provenance") -> list[P
     if not d.exists():
         return []
     events: list[ProvenanceEvent] = []
-    for f in sorted(d.glob("*.jsonl")):
+    for f in sorted(d.glob("*.jsonl")):       # top-level only — bound records live in records/
         for line in f.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 events.append(ProvenanceEvent.model_validate_json(line))
     return events
+
+
+# ---- bound records: the commit-bound truth, written by the post-commit bind step ----
+
+def write_records(repo_root: Path, records: list[ProvenanceRecord], *, ledger: str = ".gitly/provenance") -> None:
+    """Append commit-bound records to `<ledger>/records/<date>.jsonl`, re-redacting the prompt."""
+    if not records:
+        return
+    d = _ledger_dir(repo_root, f"{ledger}/records")
+    for r in records:
+        safe = r.model_copy(update={"prompt_redacted": redact(r.prompt_redacted) if r.prompt_redacted else None})
+        day = (safe.bound_at or safe.created_at).strftime("%Y-%m-%d")
+        with (d / f"{day}.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(safe.model_dump_json() + "\n")
+
+
+def read_records(repo_root: Path, *, ledger: str = ".gitly/provenance") -> list[ProvenanceRecord]:
+    d = repo_root / ledger / "records"
+    if not d.exists():
+        return []
+    records: list[ProvenanceRecord] = []
+    for f in sorted(d.glob("*.jsonl")):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                records.append(ProvenanceRecord.model_validate_json(line))
+    return records
+
+
+def read_bound_ids(repo_root: Path, *, ledger: str = ".gitly/provenance") -> set[str]:
+    """Event ids already bound to a commit (so we never double-bind)."""
+    f = repo_root / ledger / ".bound"
+    if not f.exists():
+        return set()
+    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()}
+
+
+def mark_bound(repo_root: Path, event_ids: list[str], *, ledger: str = ".gitly/provenance") -> None:
+    if not event_ids:
+        return
+    f = _ledger_dir(repo_root, ledger) / ".bound"
+    with f.open("a", encoding="utf-8") as fh:
+        for eid in event_ids:
+            fh.write(eid + "\n")
 
 
 def human_edit_ratio(proposed: str, committed: str) -> float:
@@ -80,6 +123,6 @@ def bind_to_commit(
             line_start=e.line_start, line_end=e.line_end, author_type=author,
             model=e.model, agent=e.agent, session_id=e.session_id,
             prompt_ref=e.prompt_ref, prompt_redacted=e.prompt_redacted,
-            human_edit_ratio=ratio, created_at=e.created_at, bound_at=now,
+            content=committed, human_edit_ratio=ratio, created_at=e.created_at, bound_at=now,
         ))
     return records

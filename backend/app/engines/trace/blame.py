@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from shared.schema.provenance import AgentKind, AuthorType, TraceLine, TraceSummary
-from backend.app.engines.trace.recorder import read_events
+from backend.app.engines.trace.recorder import read_events, read_records
 
 _AI_TRAILERS = {
     "claude": AgentKind.claude_code,
@@ -59,24 +59,40 @@ def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind
     return AuthorType.human, AgentKind.unknown
 
 
+def _matches(path_a: str, path_b: str) -> bool:
+    return path_a.endswith(path_b) or path_b.endswith(path_a)
+
+
 def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provenance") -> list[TraceLine]:
-    events = read_events(repo_root, ledger=ledger)
-    by_file = [e for e in events if e.file_path.endswith(file_path) or file_path.endswith(e.file_path)]
+    """Per-line provenance. Prefers commit-bound *records* (they carry human_edit_ratio +
+    review state + hybrid classification), then falls back to raw events, then to inference."""
+    records = [r for r in read_records(repo_root, ledger=ledger) if _matches(r.file_path, file_path)]
+    events = [e for e in read_events(repo_root, ledger=ledger) if _matches(e.file_path, file_path)]
     out: list[TraceLine] = []
     for line_no, sha, content in _blame(repo_root, file_path):
-        match = next((e for e in by_file if e.line_start <= line_no <= e.line_end), None)
-        if match:
+        # records first: prefer one bound to *this* commit, else any whose span covers the line
+        rec = next((r for r in records if r.commit_sha == sha and r.line_start <= line_no <= r.line_end), None) \
+            or next((r for r in records if r.line_start <= line_no <= r.line_end), None)
+        if rec:
             out.append(TraceLine(
                 line_no=line_no, content=content, commit_sha=sha,
-                author_type=match.author_type, model=match.model, agent=match.agent,
-                prompt_ref=match.prompt_ref,
+                author_type=rec.author_type, model=rec.model, agent=rec.agent,
+                human_edit_ratio=rec.human_edit_ratio, reviewed=rec.reviewed_at is not None,
+                prompt_ref=rec.prompt_ref,
             ))
-        else:
-            author, agent = _infer_from_commit(repo_root, sha)
+            continue
+        ev = next((e for e in events if e.line_start <= line_no <= e.line_end), None)
+        if ev:
             out.append(TraceLine(
                 line_no=line_no, content=content, commit_sha=sha,
-                author_type=author, agent=agent, inferred=author != AuthorType.human,
+                author_type=ev.author_type, model=ev.model, agent=ev.agent, prompt_ref=ev.prompt_ref,
             ))
+            continue
+        author, agent = _infer_from_commit(repo_root, sha)
+        out.append(TraceLine(
+            line_no=line_no, content=content, commit_sha=sha,
+            author_type=author, agent=agent, inferred=author != AuthorType.human,
+        ))
     return out
 
 
