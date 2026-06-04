@@ -45,8 +45,12 @@ def read_events(repo_root: Path, *, ledger: str = ".gitly/provenance") -> list[P
     events: list[ProvenanceEvent] = []
     for f in sorted(d.glob("*.jsonl")):       # top-level only — bound records live in records/
         for line in f.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
                 events.append(ProvenanceEvent.model_validate_json(line))
+            except Exception:
+                continue                       # skip a malformed/old-schema line, don't crash trace
     return events
 
 
@@ -71,8 +75,12 @@ def read_records(repo_root: Path, *, ledger: str = ".gitly/provenance") -> list[
     records: list[ProvenanceRecord] = []
     for f in sorted(d.glob("*.jsonl")):
         for line in f.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
                 records.append(ProvenanceRecord.model_validate_json(line))
+            except Exception:
+                continue                       # skip a malformed line, don't crash trace
     return records
 
 

@@ -26,6 +26,12 @@ class AgentKind(str, Enum):
     aider = "aider"
     unknown = "unknown"
 
+    @classmethod
+    def _missing_(cls, value: object) -> "AgentKind":
+        # Any unrecognized agent identifier normalizes to `unknown` rather than raising,
+        # so a ledger written by an arbitrary tool/CI never breaks `gitly trace`.
+        return cls.unknown
+
 
 class ProvenanceEvent(BaseModel):
     """Authorship-time record, written to the local ledger the instant an agent edits
