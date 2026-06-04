@@ -1,6 +1,7 @@
 """gitly CLI — `gitly trace`, `gitly scan`, plus seams for `shrink` / `lens`."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -136,9 +137,63 @@ def shrink(
 
 
 @app.command()
-def lens(file: str = typer.Argument(..., help="Path to a unified .diff file")):
-    """Cluster a diff into conceptual change cards. (engine ports from pr-visual-diff)"""
-    typer.echo("lens: engine port pending — see MIGRATION.md (../pr-visual-diff)")
+def lens(
+    file: str = typer.Argument(None, help="Unified .diff file to analyze (omit or '-' to read stdin)"),
+    sites: bool = typer.Option(False, "--sites", help="List each cluster's individual change sites"),
+    json_out: bool = typer.Option(False, "--json", help="Emit the raw AnalysisResult as JSON"),
+):
+    """Cluster a diff into conceptual change cards (renames, insertions, outliers).
+
+    Reads a unified diff from a file or stdin — e.g. `git diff main | gitly lens`."""
+    from backend.app.engines.lens.engine import analyze, make_source
+    from backend.app.engines.lens.models import Confidence, SourceType
+
+    if file and file != "-":
+        try:
+            diff_text = Path(file).read_text()
+        except OSError as e:
+            typer.secho(f"Could not read {file}: {e}", fg="red", err=True)
+            raise typer.Exit(1)
+    else:
+        diff_text = sys.stdin.read()
+    if not diff_text.strip():
+        typer.secho("No diff provided — pass a file or pipe a unified diff on stdin.", fg="red", err=True)
+        raise typer.Exit(1)
+
+    try:
+        res = analyze(diff_text, make_source(SourceType.raw_diff))
+    except Exception as e:
+        typer.secho(f"Could not parse diff: {e}", fg="red", err=True)
+        raise typer.Exit(1)
+
+    if json_out:
+        typer.echo(res.model_dump_json(indent=2))
+        return
+
+    s = res.stats
+    typer.secho(res.title or "lens analysis", bold=True)
+    typer.echo(f"  {s.files_changed} files  +{s.lines_added}/-{s.lines_removed}  "
+               f"{s.hunk_count} hunks  ->  {s.cluster_count} clusters")
+    hue = {Confidence.high: typer.colors.GREEN, Confidence.medium: typer.colors.YELLOW,
+           Confidence.low: typer.colors.BRIGHT_BLACK}
+    rank = {Confidence.high: 0, Confidence.medium: 1, Confidence.low: 2}
+    for c in sorted(res.clusters, key=lambda c: (rank[c.confidence], -c.site_count)):
+        scope = (f"{c.site_count} site{'s' if c.site_count != 1 else ''}"
+                 f" / {c.file_count} file{'s' if c.file_count != 1 else ''}")
+        dot = typer.style("●", fg=hue[c.confidence])
+        typer.echo(f"\n  {dot} {c.kind.value}: {c.title}   [{scope}]  ({c.confidence.value})")
+        detail = c.description or c.confidence_reason
+        if detail:
+            typer.echo(f"      {detail}")
+        if sites:
+            for site in c.sites[:12]:
+                typer.echo(f"        · {site.label}")
+            if len(c.sites) > 12:
+                typer.echo(f"        · (+{len(c.sites) - 12} more)")
+        for o in c.outliers:
+            typer.secho(f"      ! outlier: {o.reason}", fg=typer.colors.YELLOW)
+    for w in res.warnings:
+        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
 
 
 @app.command()
@@ -277,6 +332,85 @@ def config():
     from backend.app.engines.copilot import brain
 
     _show_brain(brain)
+
+
+_PRE_COMMIT_HOOK = """#!/usr/bin/env bash
+# gitly pre-commit hook — block secrets before they're committed. (installed by `gitly init`)
+set -euo pipefail
+if command -v gitly >/dev/null 2>&1; then
+  gitly scan --staged || exit 1
+else
+  # fallback if gitly isn't on PATH: scan the staged diff for the highest-signal patterns
+  if git diff --cached | grep -Eq 'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|sk-(ant-)?[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
+    echo "x gitly: potential secret in staged changes — commit blocked (install gitly for the full scan)"
+    exit 1
+  fi
+fi
+"""
+
+
+def _install_claude_hook(root: Path) -> str:
+    """Register the authorship-capture PostToolUse hook in <root>/.claude/settings.json."""
+    import backend
+    script = Path(backend.__file__).resolve().parent.parent / "sdk" / "hooks" / "claude_post_tool.py"
+    if not script.exists():
+        return ("skipped Claude Code hook — capture script not found; use the gitly Claude Code "
+                "plugin instead (see docs: Integrations → MCP & Claude Code)")
+    settings = root / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    data: dict = {}
+    if settings.exists():
+        try:
+            data = json.loads(settings.read_text())
+        except json.JSONDecodeError:
+            return f"skipped Claude Code hook — {settings} is not valid JSON; edit it by hand"
+    cmd = f"python3 {script}"
+    post = data.setdefault("hooks", {}).setdefault("PostToolUse", [])
+    if any(h.get("command") == cmd for e in post if isinstance(e, dict) for h in e.get("hooks", [])):
+        return f"Claude Code capture hook already present in {settings}"
+    post.append({"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": cmd}]})
+    settings.write_text(json.dumps(data, indent=2) + "\n")
+    return f"registered Claude Code authorship-capture hook -> {settings}"
+
+
+@app.command()
+def init(
+    claude_code: bool = typer.Option(False, "--claude-code", help="Also register the Claude Code authorship-capture hook"),
+    force: bool = typer.Option(False, "--force", help="Replace an existing non-gitly pre-commit hook (backs it up)"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Set up gitly in this repo: install the secret-blocking pre-commit hook
+    (and, with --claude-code, the authorship-capture hook)."""
+    root = Path(repo if repo != "." else str(_repo_root()))
+    git_dir = root / ".git"
+    if not git_dir.is_dir():
+        typer.secho(f"Not a git repository: {root}  (run `git init` first).", fg="red", err=True)
+        raise typer.Exit(1)
+
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    pre_commit = hooks_dir / "pre-commit"
+    done: list[str] = []
+
+    if pre_commit.exists() and "gitly" not in pre_commit.read_text(errors="ignore"):
+        if not force:
+            typer.secho(f"A non-gitly pre-commit hook already exists at {pre_commit}.\n"
+                        "Re-run with --force to back it up and replace it.", fg="yellow", err=True)
+            raise typer.Exit(1)
+        backup = pre_commit.with_name("pre-commit.bak")
+        pre_commit.replace(backup)
+        done.append(f"backed up your existing hook -> {backup.name}")
+    pre_commit.write_text(_PRE_COMMIT_HOOK)
+    pre_commit.chmod(0o755)
+    done.append("installed secret-blocking pre-commit hook -> .git/hooks/pre-commit")
+
+    if claude_code:
+        done.append(_install_claude_hook(root))
+
+    typer.secho("gitly initialized:", fg="green")
+    for d in done:
+        typer.echo(f"  - {d}")
+    typer.echo("\nTest it: stage a fake key and run `git commit` — the hook will block it.")
 
 
 def main() -> None:
