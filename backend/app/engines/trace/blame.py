@@ -11,14 +11,25 @@ import subprocess
 from pathlib import Path
 
 from shared.schema.provenance import AgentKind, AuthorType, TraceLine, TraceSummary
-from backend.app.engines.trace.recorder import read_events, read_records
+from backend.app.engines.trace.recorder import read_events, read_records, read_reviewed
 
 _AI_TRAILERS = {
+    # more-specific needles first — first match wins
+    "openai codex": AgentKind.openai_codex,
+    "sourcegraph cody": AgentKind.cody,
+    "kiro": AgentKind.kiro,
+    "jetbrains ai": AgentKind.jetbrains_ai,
     "claude": AgentKind.claude_code,
     "cursor": AgentKind.cursor,
     "copilot": AgentKind.copilot,
     "aider": AgentKind.aider,
     "windsurf": AgentKind.windsurf,
+    "antigravity": AgentKind.antigravity,
+    "lovable": AgentKind.lovable,
+    "gemini": AgentKind.gemini,
+    "devin": AgentKind.devin,
+    "replit": AgentKind.replit,
+    "tabnine": AgentKind.tabnine,
 }
 
 
@@ -68,8 +79,10 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
     review state + hybrid classification), then falls back to raw events, then to inference."""
     records = [r for r in read_records(repo_root, ledger=ledger) if _matches(r.file_path, file_path)]
     events = [e for e in read_events(repo_root, ledger=ledger) if _matches(e.file_path, file_path)]
+    reviewed_shas = read_reviewed(repo_root, ledger=ledger)
     out: list[TraceLine] = []
     for line_no, sha, content in _blame(repo_root, file_path):
+        seen = sha in reviewed_shas        # human signed off on this commit's AI lines
         # records first: prefer one bound to *this* commit, else any whose span covers the line
         rec = next((r for r in records if r.commit_sha == sha and r.line_start <= line_no <= r.line_end), None) \
             or next((r for r in records if r.line_start <= line_no <= r.line_end), None)
@@ -77,7 +90,7 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
             out.append(TraceLine(
                 line_no=line_no, content=content, commit_sha=sha,
                 author_type=rec.author_type, model=rec.model, agent=rec.agent,
-                human_edit_ratio=rec.human_edit_ratio, reviewed=rec.reviewed_at is not None,
+                human_edit_ratio=rec.human_edit_ratio, reviewed=seen or rec.reviewed_at is not None,
                 prompt_ref=rec.prompt_ref,
             ))
             continue
@@ -85,13 +98,14 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
         if ev:
             out.append(TraceLine(
                 line_no=line_no, content=content, commit_sha=sha,
-                author_type=ev.author_type, model=ev.model, agent=ev.agent, prompt_ref=ev.prompt_ref,
+                author_type=ev.author_type, model=ev.model, agent=ev.agent,
+                reviewed=seen, prompt_ref=ev.prompt_ref,
             ))
             continue
         author, agent = _infer_from_commit(repo_root, sha)
         out.append(TraceLine(
             line_no=line_no, content=content, commit_sha=sha,
-            author_type=author, agent=agent, inferred=author != AuthorType.human,
+            author_type=author, agent=agent, reviewed=seen, inferred=author != AuthorType.human,
         ))
     return out
 

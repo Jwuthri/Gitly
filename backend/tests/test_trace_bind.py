@@ -98,6 +98,9 @@ def test_trace_untracked_file_is_clean_error(repo, monkeypatch):
 def test_agentkind_normalizes_unknown_values():
     assert AgentKind("my-tool") is AgentKind.unknown   # arbitrary tool name → unknown, never raises
     assert AgentKind("cursor") is AgentKind.cursor
+    assert AgentKind("antigravity") is AgentKind.antigravity
+    assert AgentKind("kiro") is AgentKind.kiro
+    assert AgentKind("continue") is AgentKind.continue_
 
 
 def test_read_events_tolerates_arbitrary_agent_and_garbage(repo):
@@ -109,6 +112,27 @@ def test_read_events_tolerates_arbitrary_agent_and_garbage(repo):
     events = recorder.read_events(repo)
     assert len(events) == 1                            # garbage line skipped, not a crash
     assert events[0].agent is AgentKind.unknown        # 'my-tool' normalized
+
+
+def test_review_clears_unreviewed_ai_lines(repo):
+    from backend.app.engines.trace.blame import summarize
+    code = "x = 1\ny = 2\n"
+    (repo / "r.py").write_text(code)
+    recorder.record_event(repo, _event("r", "r.py", code, line_end=2))
+    _git(repo, "add", "r.py")
+    _git(repo, "commit", "-qm", "feat: r")
+    bind_head(repo)
+
+    before = summarize(trace_file(repo, "r.py"), repo="r")
+    assert before.unreviewed_ai_lines >= 1
+
+    sha = _git(repo, "rev-parse", "HEAD").strip()
+    assert recorder.mark_reviewed(repo, [sha], by="me") == 1   # marks it
+    assert recorder.mark_reviewed(repo, [sha], by="me") == 0   # idempotent
+
+    after = summarize(trace_file(repo, "r.py"), repo="r")
+    assert after.unreviewed_ai_lines == 0
+    assert after.ai_lines == before.ai_lines                    # still AI, just reviewed now
 
 
 def test_bind_skips_files_absent_from_commit(repo):

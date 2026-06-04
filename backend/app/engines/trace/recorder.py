@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -99,6 +100,39 @@ def mark_bound(repo_root: Path, event_ids: list[str], *, ledger: str = ".gitly/p
     with f.open("a", encoding="utf-8") as fh:
         for eid in event_ids:
             fh.write(eid + "\n")
+
+
+# ---- review: mark AI-authored commits as human-reviewed (local, blame-sha based) ----
+
+def read_reviewed(repo_root: Path, *, ledger: str = ".gitly/provenance") -> set[str]:
+    """Commit SHAs whose AI lines a human has signed off on."""
+    f = repo_root / ledger / "reviewed.jsonl"
+    if not f.exists():
+        return set()
+    out: set[str] = set()
+    for line in f.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.add(json.loads(line)["commit_sha"])
+        except Exception:
+            continue
+    return out
+
+
+def mark_reviewed(repo_root: Path, commit_shas: list[str], *, by: str = "", ledger: str = ".gitly/provenance") -> int:
+    """Record that `commit_shas` were reviewed. Idempotent — already-reviewed shas are skipped.
+    Returns the count newly marked."""
+    existing = read_reviewed(repo_root, ledger=ledger)
+    fresh = [s for s in dict.fromkeys(commit_shas) if s and s not in existing]
+    if not fresh:
+        return 0
+    f = _ledger_dir(repo_root, ledger) / "reviewed.jsonl"
+    now = datetime.now(UTC).isoformat()
+    with f.open("a", encoding="utf-8") as fh:
+        for s in fresh:
+            fh.write(json.dumps({"commit_sha": s, "reviewed_by": by, "reviewed_at": now}) + "\n")
+    return len(fresh)
 
 
 def human_edit_ratio(proposed: str, committed: str) -> float:
