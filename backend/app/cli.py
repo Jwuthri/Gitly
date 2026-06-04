@@ -32,6 +32,11 @@ def _tracked_files(root: Path) -> list[str]:
     return out.stdout.splitlines()
 
 
+def _git_user(root: Path) -> str:
+    out = subprocess.run(["git", "-C", str(root), "config", "user.name"], capture_output=True, text=True)
+    return out.stdout.strip() or "unknown"
+
+
 def _tag(ln) -> str:
     if ln.author_type.value == "human":
         return "human"
@@ -107,6 +112,52 @@ def bind(
             typer.secho(f"bound {len(records)} authorship event(s) to {sha[:8]}", fg="green")
         else:
             typer.echo("nothing to bind")
+
+
+@app.command()
+def review(
+    paths: list[str] = typer.Argument(None, help="File(s) whose AI lines to mark reviewed"),
+    commit: list[str] = typer.Option(None, "--commit", help="Specific commit SHA(s) to mark reviewed (repeatable)"),
+    all_files: bool = typer.Option(False, "--all", help="Mark every AI line in the repo reviewed"),
+    show: bool = typer.Option(False, "--list", help="List reviewed commits and exit"),
+    by: str = typer.Option(None, "--by", help="Reviewer name (default: your git user.name)"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Sign off on AI-authored code — clears it from `unreviewed AI lines`.
+
+    Reviews by the commit that introduced each line, so it works for recorded AND inferred
+    provenance. e.g. `gitly review app.py`, `gitly review --commit <sha>`, `gitly review --all`."""
+    from backend.app.engines.trace.blame import trace_file
+    from backend.app.engines.trace.recorder import mark_reviewed, read_reviewed
+
+    root = Path(repo if repo != "." else str(_repo_root()))
+    if show:
+        rv = read_reviewed(root)
+        typer.echo(f"{len(rv)} reviewed commit(s)")
+        for s in sorted(rv):
+            typer.echo(f"  {s[:12]}")
+        return
+
+    shas: set[str] = set(commit or [])
+    files = _tracked_files(root) if all_files else (paths or [])
+    ai_lines = 0
+    for f in files:
+        try:
+            for ln in trace_file(root, f):
+                if ln.author_type.value != "human" and ln.commit_sha:
+                    shas.add(ln.commit_sha)
+                    ai_lines += 1
+        except Exception:
+            continue
+    if not shas:
+        typer.secho("Nothing to review — pass file(s), --commit <sha>, or --all.", fg="yellow", err=True)
+        raise typer.Exit(1)
+    reviewer = by or _git_user(root)
+    n = mark_reviewed(root, list(shas), by=reviewer)
+    scope = "the whole repo" if all_files else (", ".join(files) if files else f"{len(commit or [])} commit(s)")
+    detail = f" ({ai_lines} AI line(s))" if files else ""
+    typer.secho(f"Reviewed by {reviewer}: marked {n} new commit(s){detail} across {scope}.", fg="green")
+    typer.echo("Run `gitly trace --summary` to see the unreviewed count drop.")
 
 
 @app.command()
