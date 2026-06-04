@@ -95,6 +95,22 @@ def test_trace_untracked_file_is_clean_error(repo, monkeypatch):
     assert "Can't trace" in r.output            # friendly message, not a traceback
 
 
+def test_agentkind_normalizes_unknown_values():
+    assert AgentKind("my-tool") is AgentKind.unknown   # arbitrary tool name → unknown, never raises
+    assert AgentKind("cursor") is AgentKind.cursor
+
+
+def test_read_events_tolerates_arbitrary_agent_and_garbage(repo):
+    d = repo / ".gitly" / "provenance"
+    d.mkdir(parents=True)
+    good = ('{"event_id":"e1","repo":"r","file_path":"a.py","content_hash":"h",'
+            '"line_start":1,"line_end":1,"agent":"my-tool","created_at":"2026-06-04T00:00:00"}')
+    (d / "2026-06-04.jsonl").write_text(good + "\nnot json at all\n")
+    events = recorder.read_events(repo)
+    assert len(events) == 1                            # garbage line skipped, not a crash
+    assert events[0].agent is AgentKind.unknown        # 'my-tool' normalized
+
+
 def test_bind_skips_files_absent_from_commit(repo):
     # event for a file that never got committed → no committed text, still binds (ratio 0), no crash
     (repo / "real.py").write_text("a = 1\n")
