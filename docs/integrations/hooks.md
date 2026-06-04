@@ -1,9 +1,22 @@
 # Git hooks
 
-gitly ships two hooks in `sdk/hooks/` — one to stop secrets at the git boundary, one to
-capture AI authorship as your agent works.
+gitly ships two hooks — one to stop secrets at the git boundary, one to capture AI
+authorship as your agent works.
 
-## `pre-commit` — block secrets
+## Quick install: `gitly init`
+
+The easiest way — one command, from inside the repo:
+
+```bash
+gitly init                 # installs the secret-blocking pre-commit hook
+gitly init --claude-code   # …and registers the Claude Code authorship-capture hook
+```
+
+It's idempotent, and won't clobber an existing non-gitly `pre-commit` hook without
+`--force` (which backs the old one up). Prefer this over the manual steps below. See the
+[CLI reference](../reference/cli.md#gitly-init).
+
+## `pre-commit` — block secrets (manual)
 
 Refuses a commit whose staged diff contains secrets, using the `gitly` CLI (with a small
 regex fallback if the CLI isn't on `PATH`). This is the same firewall `gitly commit` uses,
