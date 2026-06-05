@@ -170,6 +170,8 @@ gitly shrink BASE [HEAD] [--strength S] [--max-lines N] [--write-refs] [--pr] [-
 | `--write-refs` | off | Create `shrink/*` branches per slice. |
 | `--pr` | off | Push the slices and open **chained stacked PRs** on GitHub (implies `--write-refs`). |
 | `--remote` | `origin` | Remote to push slice branches to. |
+| `--check "<cmd>"` | — | Run a build/test command against **each slice** in isolation; a red slice blocks `--pr`. |
+| `--docker <image>` | — | Run `--check` inside this Docker image (real isolation). |
 | `--llm` | off | LLM labeler for titles/intent (redacted first). |
 | `--repo PATH` | `.` | Path to the repo. |
 
