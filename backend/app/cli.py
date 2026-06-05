@@ -284,9 +284,14 @@ def shrink(
     strength: str = typer.Option("balanced", "--strength", help="gentle | balanced | aggressive"),
     max_lines: int = typer.Option(0, "--max-lines", help="Override max lines/slice (0 = use --strength)"),
     write_refs: bool = typer.Option(False, "--write-refs", help="Create shrink/* branches for each slice"),
+    pr: bool = typer.Option(False, "--pr", help="Push the slices and open chained stacked PRs on GitHub"),
+    remote: str = typer.Option("origin", "--remote", help="Remote to push slice branches to"),
     llm: bool = typer.Option(False, "--llm", help="Use the LLM labeler (needs GITLY_ANTHROPIC_API_KEY)"),
 ):
-    """Split a PR (base..head) into a verified stack of small sub-PRs."""
+    """Split a PR (base..head) into a verified stack of small sub-PRs.
+
+    Add --pr to push each slice and open a chained stack of PRs on GitHub (slice N based on
+    slice N-1) — never shipped unless completeness verifies."""
     from backend.app.engines.shrink.planner.planner import PlanOptions
     from backend.app.engines.shrink.service import shrink as run_shrink
 
@@ -299,7 +304,8 @@ def shrink(
     if max_lines:
         preset["max_lines"] = max_lines
     root = repo if repo != "." else str(_repo_root())
-    res = run_shrink(root, base, head, opts=PlanOptions(**preset), write_refs=write_refs, prefer_llm=llm)
+    make_refs = write_refs or pr        # --pr needs the slice branches
+    res = run_shrink(root, base, head, opts=PlanOptions(**preset), write_refs=make_refs, prefer_llm=llm)
     typer.echo(f"{res.original_lines} lines / {res.original_files} files  ->  {len(res.slices)} slices")
     for s in res.slices:
         dep = f"  (after #{', #'.join(map(str, s.depends_on))})" if s.depends_on else ""
@@ -311,10 +317,32 @@ def shrink(
     else:
         typer.secho("x: completeness FAILED — stack not shipped", fg="red", err=True)
         raise typer.Exit(1)
-    if write_refs and res.materialized:
+    if make_refs and res.materialized:
         typer.echo("branches:")
         for sc in res.materialized.slices:
             typer.echo(f"  {sc.branch}  ({sc.commit_sha[:10]})")
+    if pr:
+        from backend.app.engines.shrink.ship import compare_url, open_pr, pr_specs, push_branches, remote_slug
+
+        specs = pr_specs(res)
+        if not specs:
+            typer.secho("No materialized branches to ship.", fg="yellow", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"\npushing {len(specs)} slice branch(es) to {remote}…")
+        try:
+            push_branches(root, [s["branch"] for s in specs], remote=remote)
+        except Exception as e:
+            typer.secho(f"push failed: {e}", fg="red", err=True)
+            raise typer.Exit(1)
+        slug = remote_slug(root)
+        typer.echo("opening stacked PRs:")
+        for sp in specs:
+            ok, info = open_pr(root, sp)
+            if ok:
+                typer.secho(f"  ✓ {sp['branch']} → {sp['base']}   {info}", fg="green")
+            else:
+                url = compare_url(slug, sp["base"], sp["branch"]) if slug else "(no origin remote)"
+                typer.secho(f"  ! {sp['branch']} → {sp['base']}  (gh couldn't open it; create manually: {url})", fg="yellow")
 
 
 @app.command()
