@@ -140,7 +140,9 @@ agent edit → capture hook → REDACTED event → local ledger (.gitly/provenan
 
 ### Data model (the contract)
 - **`AuthorType`**: `human` · `ai` · `hybrid` (AI-written, materially human-edited)
+
 - **`AgentKind`**: `claude_code` · `cursor` · `copilot` · `windsurf` · `aider` · `openai_codex` · `antigravity` · `amazon_q` · `lovable` · `gemini` · `continue` · `cody` · `devin` · `replit` · `tabnine` · `jetbrains_ai` · `unknown`
+
 - **`human_edit_ratio`**: 0.0 (untouched AI) → 1.0 (fully rewritten); ≥ 0.5 flips a line to `hybrid`
 
 > 🔒 Prompts are redacted **before they touch disk**, and re-redacted again on server ingest. Two gates, because a provenance record is the one place a prompt could otherwise leak.
