@@ -45,7 +45,7 @@ def main() -> None:
         line_start=1,
         line_end=max(1, new_text.count("\n") + 1),
         proposed_text=new_text,
-        model=payload.get("model") or "claude-opus-4-8",
+        model=payload.get("model"),   # the model Claude Code reports; None if it doesn't (don't guess)
         agent="claude_code",
         session_id=payload.get("session_id"),
     )

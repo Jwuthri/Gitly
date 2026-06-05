@@ -153,6 +153,24 @@ def test_sync_build_records_groups_spans(repo):
     assert origin_repo_key(repo)                            # falls back to a non-empty key (no remote)
 
 
+def test_inference_uses_trailers_not_body_mentions(repo):
+    from backend.app.engines.trace.blame import _infer_from_commit
+
+    # a commit that merely *mentions* an agent in its subject → NOT attributed to it
+    (repo / "x.py").write_text("a = 1\n")
+    _git(repo, "add", "x.py")
+    _git(repo, "commit", "-qm", "test(copilot): cover the copilot feature")
+    sha1 = _git(repo, "rev-parse", "HEAD").strip()
+    assert _infer_from_commit(repo, sha1) == (AuthorType.human, AgentKind.unknown)
+
+    # a real Co-Authored-By trailer → inferred AI
+    (repo / "y.py").write_text("b = 2\n")
+    _git(repo, "add", "y.py")
+    _git(repo, "commit", "-qm", "feat: y\n\nCo-Authored-By: Claude <noreply@anthropic.com>")
+    sha2 = _git(repo, "rev-parse", "HEAD").strip()
+    assert _infer_from_commit(repo, sha2) == (AuthorType.ai, AgentKind.claude_code)
+
+
 def test_bind_skips_files_absent_from_commit(repo):
     # event for a file that never got committed → no committed text, still binds (ratio 0), no crash
     (repo / "real.py").write_text("a = 1\n")

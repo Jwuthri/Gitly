@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
@@ -75,6 +76,14 @@ def build_records(repo_root: Path, repo_key: str, files: list[str]) -> list[dict
         if span:
             records.append(_span_record(repo_key, f, span, now))
     return records
+
+
+def clear_records(api_url: str, repo_key: str) -> int:
+    """Delete a key's existing records (so a re-sync replaces rather than accumulates)."""
+    url = f"{api_url.rstrip('/')}/trace/records?repo=" + urllib.parse.quote(repo_key, safe="")
+    req = urllib.request.Request(url, method="DELETE")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read()).get("deleted", 0)
 
 
 def push_records(api_url: str, records: list[dict], *, batch: int = 500) -> int:
