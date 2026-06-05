@@ -135,6 +135,24 @@ def test_review_clears_unreviewed_ai_lines(repo):
     assert after.ai_lines == before.ai_lines                    # still AI, just reviewed now
 
 
+def test_sync_build_records_groups_spans(repo):
+    from backend.app.engines.trace.sync import build_records, origin_repo_key
+    code = "x = 1\ny = 2\n"
+    (repo / "s.py").write_text(code)
+    recorder.record_event(repo, _event("r", "s.py", code, line_end=2))
+    _git(repo, "add", "s.py")
+    _git(repo, "commit", "-qm", "feat: s")
+    bind_head(repo)
+
+    recs = build_records(repo, "mykey", ["s.py"])
+    assert recs, "expected at least one synced record"
+    r0 = recs[0]
+    assert r0["repo"] == "mykey" and r0["file_path"] == "s.py"
+    assert r0["author_type"] == "ai" and r0["content"]      # span carries the code text
+    assert r0["record_id"] and r0["created_at"]             # ingest-required fields present
+    assert origin_repo_key(repo)                            # falls back to a non-empty key (no remote)
+
+
 def test_bind_skips_files_absent_from_commit(repo):
     # event for a file that never got committed → no committed text, still binds (ratio 0), no crash
     (repo / "real.py").write_text("a = 1\n")
