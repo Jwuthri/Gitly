@@ -161,7 +161,8 @@ gitly trace <file>           # per-line AI/human provenance (git blame + recorde
 gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin
-gitly shrink <base> <head> --repo .  # split a PR into a VERIFIED stack (materialize + tree-equality)
+gitly shrink <base> <head>         # split a PR into a VERIFIED stack (materialize + tree-equality)
+gitly shrink <base> <head> --pr    # …and push + open chained stacked PRs on GitHub
 git diff main | gitly lens         # cluster a diff into conceptual cards (renames / insertions / outliers)
 ```
 
@@ -291,10 +292,10 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** trace engine (recorder + blame-join + CLI) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant; **CLI + API**) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · **`gitly init`** (one-command hook install) · secret firewall (entropy-FP gate + `gitly:allow` allowlist) · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook · **docs site** (Material for MkDocs → GitHub Pages) · **CI** (ruff + pytest, 44 tests).
+**Live & verified:** **trace** (capture → `bind` → `review` → `sync` → `backfill` → dashboard; blame-join + honest trailer/author inference) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant; **CLI + API**) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API + **`--pr` chained stacked PRs** + async worker) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · **`gitly init`** (one-command hook install) · secret firewall (entropy-FP gate + `gitly:allow` allowlist) · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook · **docs site** (Material for MkDocs → GitHub Pages) · **CI** (ruff + pytest, 59 tests).
 
 **Next:**
-1. Surface `commit` / `--split` / `absorb` as MCP tools (the CLI is live; mirror it for the agent).
-2. Shrink: GitHub-App worker (clone → open stacked PRs) + squash-merge stack reconciliation + the Docker validation sandbox.
+1. Surface `commit` / `--split` / `absorb` / `shrink` as MCP tools (the CLI is live; mirror it for the agent).
+2. **Hosted shrink:** a GitHub App (webhook → clone-from-URL → auto-open the stack) + the Docker validation sandbox (each slice compiles/tests green). *(The async worker + `gitly shrink --pr` stacked-PR opener already land.)*
 3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
 4. Distribution: publish `gitly` to PyPI + the MCP server to npm.

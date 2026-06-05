@@ -158,7 +158,7 @@ echo "text" | gitly scan
 Split a range into a verified stack of small slices.
 
 ```bash
-gitly shrink BASE [HEAD] [--strength S] [--max-lines N] [--write-refs] [--llm] [--repo PATH]
+gitly shrink BASE [HEAD] [--strength S] [--max-lines N] [--write-refs] [--pr] [--llm] [--repo PATH]
 ```
 
 | Argument / flag | Default | Meaning |
@@ -168,6 +168,8 @@ gitly shrink BASE [HEAD] [--strength S] [--max-lines N] [--write-refs] [--llm] [
 | `--strength` | `balanced` | `gentle` \| `balanced` \| `aggressive`. |
 | `--max-lines N` | `0` | Override the line cap (`0` = use `--strength`). |
 | `--write-refs` | off | Create `shrink/*` branches per slice. |
+| `--pr` | off | Push the slices and open **chained stacked PRs** on GitHub (implies `--write-refs`). |
+| `--remote` | `origin` | Remote to push slice branches to. |
 | `--llm` | off | LLM labeler for titles/intent (redacted first). |
 | `--repo PATH` | `.` | Path to the repo. |
 

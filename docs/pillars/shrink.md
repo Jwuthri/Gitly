@@ -63,11 +63,41 @@ gitly shrink main HEAD --max-lines 250        # override the line cap directly
 | `--strength` | `gentle` \| `balanced` \| `aggressive`. |
 | `--max-lines N` | Override the per-slice line cap (`0` = use `--strength`). |
 | `--write-refs` | Create `shrink/*` branches for each materialized slice. |
+| `--pr` | Push the slices and open **chained stacked PRs** on GitHub. |
+| `--remote` | Remote to push slice branches to (default `origin`). |
 | `--llm` | Use the LLM labeler for slice titles/intent (redacted first). |
 | `--repo PATH` | Path to the git repo. |
 
 With `--write-refs`, gitly prints the created branch and commit for each slice so you can
 push them as a stack.
+
+## Ship it — stacked PRs
+
+`--pr` takes the verified stack all the way to GitHub: it pushes each `shrink/*` branch and
+opens **one PR per slice, chained** — slice 1 based on your real base, slice 2 based on
+slice 1, and so on. That's a true stacked-PR set, each piece small and reviewable.
+
+```console
+$ gitly shrink main HEAD --pr
+83 lines / 4 files  ->  3 slices
+  #1  chore: dependencies   [2 ln / 1 files]
+  #2  feat: core            [80 ln / 2 files]  (after #1)
+  #3  test: cover           [1 ln / 1 files]   (after #2)
+ok: completeness verified — tree(base + slices) == tree(head)
+opening stacked PRs:
+  ✓ shrink/1-dependencies → main
+  ✓ shrink/2-core         → shrink/1-dependencies
+  ✓ shrink/3-cover        → shrink/2-core
+```
+
+It uses your own `git` + `gh` auth — **no GitHub App required**. If `gh` can't open a PR
+(not authed, not a collaborator), it prints the compare URL for each slice so you can open
+them by hand. The stack is **never pushed unless completeness verifies**.
+
+!!! note "Hosted / webhook-driven shrink"
+    A GitHub App that clones a repo on a webhook and auto-opens the stack is a separate
+    milestone. The async worker (`gitly.shrink.run`) already runs the real engine on a repo
+    path; the App layer (installation auth, public webhook) is the remaining piece.
 
 ## Over HTTP
 
