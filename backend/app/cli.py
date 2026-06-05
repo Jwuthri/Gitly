@@ -286,12 +286,15 @@ def shrink(
     write_refs: bool = typer.Option(False, "--write-refs", help="Create shrink/* branches for each slice"),
     pr: bool = typer.Option(False, "--pr", help="Push the slices and open chained stacked PRs on GitHub"),
     remote: str = typer.Option("origin", "--remote", help="Remote to push slice branches to"),
+    check: str = typer.Option(None, "--check", help="Run this build/test command against EACH slice; a red slice blocks --pr"),
+    docker: str = typer.Option(None, "--docker", help="Run --check inside this Docker image (real isolation)"),
     llm: bool = typer.Option(False, "--llm", help="Use the LLM labeler (needs GITLY_ANTHROPIC_API_KEY)"),
 ):
     """Split a PR (base..head) into a verified stack of small sub-PRs.
 
     Add --pr to push each slice and open a chained stack of PRs on GitHub (slice N based on
-    slice N-1) — never shipped unless completeness verifies."""
+    slice N-1). Add --check "<cmd>" to prove every slice builds/tests green in isolation
+    before shipping. Never shipped unless completeness verifies."""
     from backend.app.engines.shrink.planner.planner import PlanOptions
     from backend.app.engines.shrink.service import shrink as run_shrink
 
@@ -304,7 +307,7 @@ def shrink(
     if max_lines:
         preset["max_lines"] = max_lines
     root = repo if repo != "." else str(_repo_root())
-    make_refs = write_refs or pr        # --pr needs the slice branches
+    make_refs = write_refs or pr or bool(check)   # branches/commits needed to ship or validate
     res = run_shrink(root, base, head, opts=PlanOptions(**preset), write_refs=make_refs, prefer_llm=llm)
     typer.echo(f"{res.original_lines} lines / {res.original_files} files  ->  {len(res.slices)} slices")
     for s in res.slices:
@@ -321,6 +324,21 @@ def shrink(
         typer.echo("branches:")
         for sc in res.materialized.slices:
             typer.echo(f"  {sc.branch}  ({sc.commit_sha[:10]})")
+    if check:
+        from backend.app.engines.shrink.validate import validate_stack
+
+        where = f" inside {docker}" if docker else ""
+        typer.echo(f"\nvalidating each slice{where}: `{check}`")
+        results = validate_stack(root, res, check, docker_image=docker)
+        for c in results:
+            typer.secho(f"  {'✓' if c.ok else '✗'} #{c.order}  {c.title}", fg="green" if c.ok else "red")
+            if not c.ok:
+                for ln in c.output.splitlines()[-4:]:
+                    typer.echo(f"        {ln}")
+        if any(not c.ok for c in results):
+            typer.secho("x: a slice failed validation — not shipping. (Fix the ordering / split.)", fg="red", err=True)
+            raise typer.Exit(1)
+        typer.secho("ok: every slice is green ✅", fg="green")
     if pr:
         from backend.app.engines.shrink.ship import compare_url, open_pr, pr_specs, push_branches, remote_slug
 
