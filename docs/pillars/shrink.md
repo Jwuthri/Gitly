@@ -99,6 +99,34 @@ them by hand. The stack is **never pushed unless completeness verifies**.
     milestone. The async worker (`gitly.shrink.run`) already runs the real engine on a repo
     path; the App layer (installation auth, public webhook) is the remaining piece.
 
+## Validate every slice
+
+Tree-equality proves the *whole* stack reconstructs `head`. But does each slice **build on
+its own**? `--check "<cmd>"` runs a build/test command against every slice in isolation —
+each slice's commit is checked out into a throwaway **git worktree** and the command runs
+there:
+
+```console
+$ gitly shrink main HEAD --check "python -m compileall -q ." --pr
+...
+validating each slice: `python -m compileall -q .`
+  ✓ #1  chore: dependencies
+  ✓ #2  feat: core
+  ✓ #3  test: cover
+ok: every slice is green ✅
+```
+
+A **red slice blocks `--pr`** (exit 1, nothing pushed) — a slice that fails on its own means
+the (heuristic) dependency ordering shipped something too late. Add `--docker <image>` to run
+the check inside a container for real environment isolation:
+
+```bash
+gitly shrink main HEAD --check "pytest -q" --docker python:3.12 --pr
+```
+
+This upgrades the guarantee from *"the stack reconstructs head"* to *"…and every slice is
+green."*
+
 ## Over HTTP
 
 The planning step is also exposed by the backend, so a UI (or your agent) can preview a
