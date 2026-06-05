@@ -57,15 +57,24 @@ def _blame(repo_root: Path, file_path: str) -> list[tuple[int, str, str]]:
     return rows
 
 
+_TRAILER_KEYS = ("co-authored-by:", "co-developed-by:", "generated-by:", "assisted-by:")
+
+
 def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind]:
+    """Infer AI authorship ONLY from commit *trailers* (`Co-Authored-By: Claude`) and the
+    *author identity* — never a bare mention in the subject/body. (A commit titled
+    `test(copilot): …` is *about* Copilot, not written by it — that was a false positive.)"""
     if not sha:
         return AuthorType.human, AgentKind.unknown
     try:
-        msg = _git(repo_root, "log", "-1", "--format=%B%n%an%n%ae", sha).lower()
+        raw = _git(repo_root, "log", "-1", "--format=%B%x00%an%x00%ae", sha)
     except subprocess.CalledProcessError:
         return AuthorType.human, AgentKind.unknown
+    body, _, ident = raw.partition("\x00")
+    trailers = " ".join(ln for ln in body.lower().splitlines() if ln.strip().startswith(_TRAILER_KEYS))
+    hay = trailers + " " + ident.replace("\x00", " ").lower()   # trailer lines + author name/email
     for needle, agent in _AI_TRAILERS.items():
-        if needle in msg:
+        if needle in hay:
             return AuthorType.ai, agent
     return AuthorType.human, AgentKind.unknown
 

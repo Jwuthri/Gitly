@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.db.models import ProvenanceRecordORM
@@ -30,6 +30,14 @@ def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db
         ))
     db.commit()
     return {"ingested": len(records)}
+
+
+@router.delete("/records")
+def delete_records(repo: str, db: Session = Depends(get_db)):
+    """Clear all records for a repo key (used by `gitly sync --reset` to avoid pile-up)."""
+    n = db.execute(delete(ProvenanceRecordORM).where(ProvenanceRecordORM.repo == repo)).rowcount
+    db.commit()
+    return {"deleted": n}
 
 
 def _records_for(db: Session, repo: str):

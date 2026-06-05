@@ -161,6 +161,44 @@ def review(
 
 
 @app.command()
+def sync(
+    paths: list[str] = typer.Argument(None, help="File(s) to sync (default: all tracked files)"),
+    key: str = typer.Option(None, "--key", help="Dashboard key — the exact value to type in the /trace box (default: your git origin URL)"),
+    reset: bool = typer.Option(False, "--reset", help="Clear this key's existing records first (so re-syncs replace, not accumulate)"),
+    api: str = typer.Option("http://localhost:8000", "--api", help="gitly backend URL"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Push this repo's REAL provenance to the backend so the web dashboard shows it.
+
+    `gitly trace` reads your local ledger; the dashboard reads the database — this bridges
+    them (the seed script only plants fixtures). Then open /trace with the printed key."""
+    from backend.app.engines.trace.sync import build_records, clear_records, origin_repo_key, push_records
+
+    root = Path(repo if repo != "." else str(_repo_root()))
+    dash_key = key or origin_repo_key(root)
+    files = list(paths) if paths else _tracked_files(root)
+    if not files:
+        typer.secho("Nothing to sync.", fg="yellow", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Tracing {len(files)} file(s) for '{dash_key}' …")
+    records = build_records(root, dash_key, files)
+    if not records:
+        typer.secho("No provenance to sync (no traceable lines found).", fg="yellow", err=True)
+        raise typer.Exit(1)
+    try:
+        if reset:
+            cleared = clear_records(api, dash_key)
+            typer.echo(f"  reset: cleared {cleared} existing record(s) for '{dash_key}'")
+        n = push_records(api, records)
+    except Exception as e:
+        typer.secho(f"Could not reach the backend at {api}: {e}\n"
+                    "Is it running? Start it with `make up` (or `make api`).", fg="red", err=True)
+        raise typer.Exit(1)
+    typer.secho(f"Synced {n} record(s) for '{dash_key}'.", fg="green")
+    typer.echo(f"Open: http://localhost:3000/trace?repo={dash_key}")
+
+
+@app.command()
 def scan(staged: bool = typer.Option(False, "--staged", help="Scan staged changes (for a pre-commit hook).")):
     """Secret firewall: block secrets before they're committed."""
     root = _repo_root()
