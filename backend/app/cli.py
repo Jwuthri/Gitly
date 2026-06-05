@@ -199,6 +199,65 @@ def sync(
 
 
 @app.command()
+def backfill(
+    agent: str = typer.Option("claude_code", "--agent", help="Agent to attribute existing code to"),
+    model: str = typer.Option(None, "--model", help="Model name to record (optional; omit = unknown)"),
+    exclude: str = typer.Option("", "--exclude", help="Comma-separated globs to skip (e.g. '*.md,*.lock')"),
+    repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
+):
+    """Attest that the EXISTING tracked code was AI-authored — a one-time backfill for a repo
+    built before capture was on, so `gitly trace` / the dashboard reflect it.
+
+    This is YOUR attestation (whole-file, your say-so), not captured per-keystroke truth. It
+    attributes every tracked file (minus --exclude) to --agent; refine with --exclude."""
+    import fnmatch
+    import hashlib
+    from datetime import UTC, datetime
+
+    from backend.app.engines.trace.recorder import write_records
+    from shared.schema.provenance import AgentKind, AuthorType, ProvenanceRecord
+
+    root = Path(repo if repo != "." else str(_repo_root()))
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+    ).stdout.strip() or "0" * 40
+    skip = (*(g.strip() for g in exclude.split(",") if g.strip()),
+            "*.lock", "*-lock.json", "*.min.js", "*.min.css", "*.map", "*.png", "*.jpg",
+            "*.jpeg", "*.gif", "*.svg", "*.ico", "*.webp", "*.woff", "*.woff2", "*.ttf", "*.pdf")
+    now = datetime.now(UTC)
+    records: list[ProvenanceRecord] = []
+    skipped = 0
+    for f in _tracked_files(root):
+        if any(fnmatch.fnmatch(f, g) for g in skip):
+            skipped += 1
+            continue
+        try:
+            content = (root / f).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            skipped += 1
+            continue
+        n = len(content.splitlines())
+        if n == 0:
+            continue
+        rid = hashlib.sha256(f"backfill:{root.name}:{f}".encode()).hexdigest()[:32]
+        records.append(ProvenanceRecord(
+            record_id=rid, repo=root.name, commit_sha=head, file_path=f,
+            line_start=1, line_end=n, author_type=AuthorType.ai,
+            model=model, agent=AgentKind(agent), content=content,
+            human_edit_ratio=0.0, created_at=now, bound_at=now,
+        ))
+    if not records:
+        typer.secho("Nothing to backfill.", fg="yellow", err=True)
+        raise typer.Exit(1)
+    write_records(root, records)
+    lines = sum(r.line_end for r in records)
+    label = f"AI:{agent}" + (f" / {model}" if model else "")
+    typer.secho(f"Backfilled {len(records)} file(s) (~{lines} lines) as {label}. Skipped {skipped}.", fg="green")
+    typer.echo("Attested (your say-so, edit-ratio 0). See `gitly trace --summary`; "
+               "push to the dashboard with `gitly sync --reset`.")
+
+
+@app.command()
 def scan(staged: bool = typer.Option(False, "--staged", help="Scan staged changes (for a pre-commit hook).")):
     """Secret firewall: block secrets before they're committed."""
     root = _repo_root()

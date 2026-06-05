@@ -171,6 +171,22 @@ def test_inference_uses_trailers_not_body_mentions(repo):
     assert _infer_from_commit(repo, sha2) == (AuthorType.ai, AgentKind.claude_code)
 
 
+def test_backfill_attributes_existing_code(repo):
+    (repo / "a.py").write_text("x = 1\ny = 2\nz = 3\n")
+    (repo / "pkg.lock").write_text("lockfile\n")          # should be skipped by default
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "feat: a")
+
+    r = runner.invoke(app, ["backfill", "--agent", "claude_code", "--repo", str(repo)])
+    assert r.exit_code == 0, r.output
+
+    lines = trace_file(repo, "a.py")
+    assert lines and all(ln.author_type == AuthorType.ai for ln in lines)
+    assert all(ln.agent == AgentKind.claude_code for ln in lines)
+    # the lockfile was skipped → still human
+    assert all(ln.author_type == AuthorType.human for ln in trace_file(repo, "pkg.lock"))
+
+
 def test_bind_skips_files_absent_from_commit(repo):
     # event for a file that never got committed → no committed text, still binds (ratio 0), no crash
     (repo / "real.py").write_text("a = 1\n")
