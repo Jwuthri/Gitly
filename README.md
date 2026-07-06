@@ -81,7 +81,7 @@ gitly/
 ## Architecture
 
 - **One shared kernel.** `shrink`, `lens`, and `trace` all stand on `shared/diff_core` (one unified-diff parser) and `shared/schema` (Pydantic contracts) — not three copies. This is the point of consolidation.
-- **Backend (FastAPI)** owns the Postgres schema (SQLAlchemy, `create_all` on boot for dev; Alembic is a dependency, prod migrations TBD) and exposes the engines over HTTP.
+- **Backend (FastAPI)** owns the Postgres schema (SQLAlchemy; `create_all` on boot for dev, `alembic upgrade head` for prod — the initial migration ships in [`alembic/`](alembic)) and exposes the engines over HTTP.
 - **Workers (Celery + Redis)** run heavy/async jobs (shrink, provenance sync). The broker is Redis.
 - **Frontend (Next.js)** reads the backend over HTTP. Server components fetch via the internal service URL (`API_URL_INTERNAL`); the browser uses `NEXT_PUBLIC_API_URL`.
 - **SDK + hooks + MCP** are how authorship gets *captured* and how the copilot reaches you inside your agent.
@@ -157,8 +157,11 @@ gitly auth                   # one-time setup: Claude Code (zero-config) / OpenA
 gitly config                 # show the active provider + key sources (values are never printed)
 
 # --- the rest ---
+gitly doctor                 # diagnose the setup: repo, hooks, ledger, brain, backend — with fixes
 gitly trace <file>           # per-line AI/human provenance (git blame + recorded provenance)
 gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
+gitly trace --summary --json --max-unreviewed 0   # CI gate: fail the build on unreviewed AI code
+gitly bind --backfill        # rescue events committed without the hook (bind to their real commit)
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin
 gitly shrink <base> <head>         # split a PR into a VERIFIED stack (materialize + tree-equality)
@@ -174,7 +177,7 @@ git diff main | gitly lens         # cluster a diff into conceptual cards (renam
 
 ## The MCP server (Claude Code / Cursor)
 
-A pure-Node stdio server in [`sdk/mcp/`](sdk/mcp/README.md) that composes local git + the gitly backend + the provenance ledger into 8 opinionated tools: `gitly_status`, `gitly_scan_secrets`, `gitly_explain_diff`, `gitly_safe_commit`, `gitly_absorb`, `gitly_trace_summary`, `gitly_record_authorship`, `gitly_shrink`.
+A pure-Node stdio server in [`sdk/mcp/`](sdk/mcp/README.md) that composes local git + the gitly backend + the provenance ledger into 10 opinionated tools: `gitly_status`, `gitly_scan_secrets`, `gitly_explain_diff`, `gitly_safe_commit`, `gitly_split`, `gitly_absorb`, `gitly_init`, `gitly_trace_summary`, `gitly_record_authorship`, `gitly_shrink` (plan). `gitly_split` / `gitly_init` shell out to the `gitly` CLI so the python logic isn't duplicated.
 
 ```bash
 cd sdk/mcp && npm install && npm run build      # -> dist/
@@ -197,7 +200,7 @@ claude --plugin-dir /absolute/path/to/gitly     # load the plugin for a session
 ```
 
 - **Slash commands** ([`commands/`](commands)): `/gitly:commit`, `/gitly:absorb`, `/gitly:scan`, `/gitly:shrink`, `/gitly:lens`, `/gitly:trace`.
-- **MCP server**: the 8 tools above, launched from `${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist`.
+- **MCP server**: the 10 tools above, launched from `${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist`.
 - **Hook** ([`hooks/hooks.json`](hooks/hooks.json)): a `PostToolUse(Edit|Write)` hook records AI authorship to the local ledger (feeds `gitly trace`).
 
 ---
@@ -226,9 +229,10 @@ Base: `http://localhost:8000` · interactive docs at **`/docs`**.
 | POST | `/copilot/scan` | `{ "text": "..." }` | secret firewall → findings + redacted preview |
 | GET | `/copilot/capabilities` | — | copilot capability status |
 | GET | `/trace/summary` | `?repo=<name>` | authorship rollup (%, by model, unreviewed) |
-| GET | `/trace/records` | `?repo=<name>` | provenance records (max 500) |
-| POST | `/trace/records` | `[ProvenanceRecord, …]` | ingest bound records (opt-in sync; re-redacts prompts) |
-| POST | `/shrink/jobs` | `{ "repo", "base", "head", "max_lines" }` | enqueue a shrink job |
+| GET | `/trace/records` | `?repo=<name>&limit=500&offset=0` | provenance records (paginated, max 2000/page) |
+| POST | `/trace/records` | `[ProvenanceRecord, …]` | ingest bound records (opt-in sync; re-redacts prompts; bearer-guarded when `GITLY_API_KEY` is set) |
+| DELETE | `/trace/records` | `?repo=<name>` | clear a repo key's records (`gitly sync --reset`; same bearer guard) |
+| POST | `/shrink/jobs` | `{ "repo", "base", "head", "max_lines" }` | enqueue an async shrink — the worker runs the real engine (plan → materialize → verify) on a repo path it can reach |
 
 ---
 
@@ -244,6 +248,7 @@ Set via `.env` (or environment). See [`.env.example`](.env.example).
 | `GITLY_CORS_ORIGIN_REGEX` | `https?://(localhost\|127\.0\.0\.1)(:\d+)?` | allow any localhost port in dev |
 | `GITLY_SECRET_SCAN` | `true` | enable the secret firewall |
 | `GITLY_SECRET_FAIL_CLOSED` | `true` | block on any finding |
+| `GITLY_API_KEY` | — | when set, POST/DELETE `/trace/records` require `Authorization: Bearer <key>` (the CLI sends it automatically). Set it anywhere the backend isn't localhost-only. |
 | `GITLY_PROVENANCE_LEDGER` | `.gitly/provenance` | local authorship ledger path |
 | `GITLY_PROVENANCE_SYNC` | `false` | opt-in: push bound records to the backend |
 | `GITLY_ANTHROPIC_API_KEY` | — | optional LLM features; diffs/prompts redacted first |
@@ -292,10 +297,9 @@ make fmt                        # ruff --fix
 
 ## Status & roadmap
 
-**Live & verified:** **trace** (capture → `bind` → `review` → `sync` → `backfill` → dashboard; blame-join + honest trailer/author inference) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant; **CLI + API**) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API + **`--pr` chained stacked PRs** + per-slice **`--check`** validation + async worker) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · **`gitly init`** (one-command hook install) · secret firewall (entropy-FP gate + `gitly:allow` allowlist) · FastAPI API + all routes · Celery wiring · Next.js site (5 pages) · seed script · MCP server (8 tools) + Claude Code plugin · provenance SDK + capture hook · **docs site** (Material for MkDocs → GitHub Pages) · **CI** (ruff + pytest, 60 tests).
+**Live & verified:** **trace** (capture → `bind` → `review` → `sync` → `backfill` → dashboard; blame-join + honest trailer/author inference; `doctor` + `bind --backfill` rescue + CI gate `--max-unreviewed`) · **lens clustering engine** (substitution / insertion / outlier layers + partition invariant; **CLI + API**) · **shrink engine** (parse → plan → materialize → tree-equality completeness; CLI + plan API + **`--pr` chained stacked PRs** + per-slice **`--check`** validation + async worker) · **copilot CLI** (`commit` with auto-message + safe-add guard, semantic `--split`, `absorb`, and a zero-config "brain": Claude Code / OpenAI / Anthropic / offline, all secret-redacted) · **`gitly init`** (one-command hook install) · secret firewall (entropy-FP gate + `gitly:allow` allowlist) · FastAPI API + all routes (bearer write-guard + pagination) · Celery wiring · Alembic migrations · Next.js site (5 pages) · seed script · MCP server (10 tools) + Claude Code plugin · provenance SDK + capture hook · **docs site** (Material for MkDocs → GitHub Pages) · **CI** (ruff + pytest, frontend typecheck, MCP build + cross-language redaction parity).
 
 **Next:**
-1. Surface `commit` / `--split` / `absorb` / `shrink` as MCP tools (the CLI is live; mirror it for the agent).
-2. **Hosted shrink:** a GitHub App (webhook → clone-from-URL → auto-open the stack). *(The async worker, `gitly shrink --pr` stacked-PR opener, and per-slice `--check`/`--docker` validation already land.)*
-3. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
-4. Distribution: publish `gitly` to PyPI + the MCP server to npm.
+1. **Hosted shrink:** a GitHub App (webhook → clone-from-URL → auto-open the stack). *(The async worker, `gitly shrink --pr` stacked-PR opener, and per-slice `--check`/`--docker` validation already land.)*
+2. tree-sitter Layer-1 + LLM Layer-3 naming for lens; GitHub PR-URL ingestion.
+3. Distribution: publish `gitly` to PyPI + the MCP server to npm.

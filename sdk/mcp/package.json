@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "npm run build && node --test test/",
     "smoke": "node test_smoke.mjs"
   },
   "dependencies": {

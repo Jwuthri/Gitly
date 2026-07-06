@@ -13,10 +13,16 @@ none of it — but it powers the web dashboards and lets your agent reach the en
 | `POST` | `/copilot/scan` | `{ "text": "..." }` | Secret firewall → findings + redacted preview. |
 | `GET` | `/copilot/capabilities` | — | Copilot capability status. |
 | `POST` | `/shrink/analyze` | `{ "diff", "strength" }` | Plan a stack from a diff (400 on a bad diff). |
-| `POST` | `/shrink/jobs` | `{ "repo", "base", "head", "max_lines" }` | Enqueue an async shrink job. |
+| `POST` | `/shrink/jobs` | `{ "repo", "base", "head", "max_lines" }` | Enqueue an async shrink — the worker runs the real engine on a repo path it can reach. |
 | `GET` | `/trace/summary` | `?repo=<name>` | Authorship rollup (%, by model, unreviewed). |
-| `GET` | `/trace/records` | `?repo=<name>` | Provenance records (max 500). |
-| `POST` | `/trace/records` | `[ProvenanceRecord, …]` | Ingest records (opt-in sync; **re-redacts** prompts). |
+| `GET` | `/trace/records` | `?repo=<name>&limit=500&offset=0` | Provenance records (paginated, ≤2000/page). |
+| `POST` | `/trace/records` | `[ProvenanceRecord, …]` | Ingest records (opt-in sync; **re-redacts** prompts; ≤5000/request). |
+| `DELETE` | `/trace/records` | `?repo=<name>` | Clear a repo key's records (`gitly sync --reset`). |
+
+!!! shield "Write guard"
+    Set `GITLY_API_KEY` on the backend and `POST`/`DELETE /trace/records` require
+    `Authorization: Bearer <key>` (the CLI's `gitly sync` sends it from the same env var).
+    Unset, the API stays open for the localhost-only dev loop.
 
 ## Examples
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import urllib.parse
 import urllib.request
@@ -17,13 +18,23 @@ from pathlib import Path
 from backend.app.engines.trace.blame import trace_file
 
 
+def _headers() -> dict[str, str]:
+    """Content type + optional bearer auth (GITLY_API_KEY) — matches the backend's
+    write-guard on POST/DELETE /trace/records."""
+    h = {"Content-Type": "application/json"}
+    key = os.environ.get("GITLY_API_KEY")
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    return h
+
+
 def origin_repo_key(repo_root: Path) -> str:
     """A stable dashboard key from the git `origin` remote (normalized to https form),
     falling back to the directory name. This is the value to type in the /trace box."""
     try:
         url = subprocess.run(
             ["git", "-C", str(repo_root), "remote", "get-url", "origin"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, timeout=10,
         ).stdout.strip()
     except Exception:
         return repo_root.name
@@ -81,7 +92,7 @@ def build_records(repo_root: Path, repo_key: str, files: list[str]) -> list[dict
 def clear_records(api_url: str, repo_key: str) -> int:
     """Delete a key's existing records (so a re-sync replaces rather than accumulates)."""
     url = f"{api_url.rstrip('/')}/trace/records?repo=" + urllib.parse.quote(repo_key, safe="")
-    req = urllib.request.Request(url, method="DELETE")
+    req = urllib.request.Request(url, method="DELETE", headers=_headers())
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read()).get("deleted", 0)
 
@@ -93,7 +104,7 @@ def push_records(api_url: str, records: list[dict], *, batch: int = 500) -> int:
     for i in range(0, len(records), batch):
         body = json.dumps(records[i:i + batch]).encode()
         req = urllib.request.Request(
-            f"{base}/trace/records", data=body, headers={"Content-Type": "application/json"},
+            f"{base}/trace/records", data=body, headers=_headers(),
         )
         with urllib.request.urlopen(req, timeout=60) as r:
             total += json.loads(r.read()).get("ingested", 0)

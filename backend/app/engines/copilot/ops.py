@@ -19,7 +19,7 @@ class GitError(RuntimeError):
 def _git(cwd: str, *args: str, env: dict | None = None, check: bool = True) -> str:
     p = subprocess.run(
         ["git", "-C", str(cwd), *args],
-        capture_output=True, text=True, env={**os.environ, **(env or {})},
+        capture_output=True, text=True, env={**os.environ, **(env or {})}, timeout=60,
     )
     if check and p.returncode != 0:
         raise GitError(p.stderr.strip())

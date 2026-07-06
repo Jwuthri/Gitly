@@ -20,7 +20,7 @@ gitly is **one toolchain with four "pillars,"** all standing on a shared diff en
 
 > 🔒 **The golden rule:** *gitly must never become the leak.* Secrets are redacted **before** anything reaches an LLM or disk, and blocked at every commit. This is enforced in code, not hoped for.
 
-**Where it runs:** a lean `gitly` CLI (4 dependencies), an MCP server (8 tools), a Claude Code plugin, git hooks, plus an optional web dashboard + API. **44 tests, CI green, docs auto-published.**
+**Where it runs:** a lean `gitly` CLI (4 dependencies), an MCP server (10 tools), a Claude Code plugin, git hooks, plus an optional web dashboard + API. **89 tests, CI green, docs auto-published.**
 
 ---
 
@@ -177,7 +177,7 @@ agent edit → capture hook → REDACTED event → local ledger (.gitly/provenan
 | `gitly shrink <base> <head>` | Verified stack of small PRs |
 | `gitly lens [file] [--sites] [--json]` | Cluster a diff into concept cards |
 
-### 2) The MCP server (8 tools, for your agent)
+### 2) The MCP server (10 tools, for your agent)
 `gitly_status` · `gitly_scan_secrets` · `gitly_explain_diff` · `gitly_safe_commit` · `gitly_absorb` · `gitly_trace_summary` · `gitly_record_authorship` · `gitly_shrink`
 
 ### 3) The Claude Code plugin
@@ -227,7 +227,7 @@ Next.js site with live demos: `/copilot` (secret scan), `/shrink` (stack preview
 ## 🛣️ What's next (the roadmap)
 
 ### ✅ Just shipped (Tier 1 + early Tier 2)
-Intelligent CLI + brain · docs site · CI + 44 tests · secret-firewall hardening · `gitly lens` CLI · `gitly init`.
+Intelligent CLI + brain · docs site · CI + 89 tests · secret-firewall hardening · `gitly lens` CLI · `gitly init` · **trace reliability pass** (commit-anchored blame join, real capture spans, per-commit binding, API write-guard + redaction parity tests).
 
 ### 🔜 Tier 2 — finish parity & polish
 - [ ] **MCP parity** — add a `gitly_split` tool (MCP has commit & absorb, but not `--split` yet); surface `lens`/`init` to the agent too.

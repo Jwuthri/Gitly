@@ -1,0 +1,12 @@
+{
+  "_comment": "Canonical fake secrets every redactor must mask. Consumed by backend/tests/test_redaction_parity.py (backend firewall + python SDK) and sdk/mcp/test/redaction.test.mjs (TS mirror). One entry per line; each carries gitly:allow so the repo's own scanner skips this fixture file.",
+  "secrets": [
+    {"name": "aws_access_key_id", "text": "AKIAIOSFODNN7EXAMPLE", "allow": "gitly:allow"},
+    {"name": "github_token", "text": "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "allow": "gitly:allow"},
+    {"name": "anthropic_key", "text": "sk-ant-api03-FakeFixture0123456789abcdef", "allow": "gitly:allow"},
+    {"name": "openai_key", "text": "sk-FakeFixture0123456789abcdefASDF", "allow": "gitly:allow"},
+    {"name": "private_key", "text": "-----BEGIN RSA PRIVATE KEY-----", "allow": "gitly:allow"},
+    {"name": "jwt", "text": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "allow": "gitly:allow"},
+    {"name": "generic_assignment", "text": "api_key = \"fixture-super-secret-value-123\"", "must_hide": "fixture-super-secret-value-123", "allow": "gitly:allow"}
+  ]
+}

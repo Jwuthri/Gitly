@@ -5,14 +5,20 @@ const PUBLIC_API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const SERVER_API = process.env.API_URL_INTERNAL ?? PUBLIC_API;
 const API = typeof window === "undefined" ? SERVER_API : PUBLIC_API;
 
-export async function getTraceSummary(repo: string) {
-  const r = await fetch(`${API}/trace/summary?repo=${encodeURIComponent(repo)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`trace/summary ${r.status}`);
+// Surface the response body in errors — "trace/summary 500" alone is undebuggable.
+async function getJson(path: string, label: string) {
+  const r = await fetch(`${API}${path}`, { cache: "no-store" });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`${label} ${r.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
   return r.json();
 }
 
+export async function getTraceSummary(repo: string) {
+  return getJson(`/trace/summary?repo=${encodeURIComponent(repo)}`, "trace/summary");
+}
+
 export async function getTraceRecords(repo: string) {
-  const r = await fetch(`${API}/trace/records?repo=${encodeURIComponent(repo)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`trace/records ${r.status}`);
-  return r.json();
+  return getJson(`/trace/records?repo=${encodeURIComponent(repo)}`, "trace/records");
 }

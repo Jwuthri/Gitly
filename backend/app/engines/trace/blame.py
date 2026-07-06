@@ -7,6 +7,7 @@ flag the line as inferred (lower confidence).
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,27 +34,32 @@ _AI_TRAILERS = {
 }
 
 
+_NULL_SHA = "0" * 40  # blame's sha for lines not committed yet
+
+
 def _git(repo_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo_root), *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, timeout=60,
     ).stdout
 
 
-def _blame(repo_root: Path, file_path: str) -> list[tuple[int, str, str]]:
-    """Return (line_no, commit_sha, content) using porcelain blame."""
+def _blame(repo_root: Path, file_path: str) -> list[tuple[int, int, str, str]]:
+    """Return (final_line_no, orig_line_no, commit_sha, content) using porcelain blame.
+    `orig_line_no` is the line's number *in the commit that introduced it* — the coordinate
+    bound records are keyed by, so attribution survives later insertions above the span."""
     out = _git(repo_root, "blame", "--line-porcelain", "--", file_path)
-    rows: list[tuple[int, str, str]] = []
-    sha, lineno = "", 0
+    rows: list[tuple[int, int, str, str]] = []
+    sha, orig, final = "", 0, 0
     for line in out.splitlines():
         first = line.split(" ", 1)[0].lstrip("^")
         if len(first) == 40 and all(c in "0123456789abcdef" for c in first):
             sha = first
             parts = line.split(" ")
-            if len(parts) >= 3 and parts[2].isdigit():
-                lineno = int(parts[2])
+            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                orig, final = int(parts[1]), int(parts[2])
         elif line.startswith("\t"):
-            rows.append((lineno, sha, line[1:]))
+            rows.append((final, orig, sha, line[1:]))
     return rows
 
 
@@ -63,8 +69,11 @@ _TRAILER_KEYS = ("co-authored-by:", "co-developed-by:", "generated-by:", "assist
 def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind]:
     """Infer AI authorship ONLY from commit *trailers* (`Co-Authored-By: Claude`) and the
     *author identity* — never a bare mention in the subject/body. (A commit titled
-    `test(copilot): …` is *about* Copilot, not written by it — that was a false positive.)"""
-    if not sha:
+    `test(copilot): …` is *about* Copilot, not written by it — that was a false positive.)
+    Needles match at word boundaries, so 'Precursor' is not 'cursor'. Known limit: a human
+    literally named after an agent (e.g. Devin) still matches — recorded provenance wins
+    over inference whenever it exists."""
+    if not sha or sha == _NULL_SHA:
         return AuthorType.human, AgentKind.unknown
     try:
         raw = _git(repo_root, "log", "-1", "--format=%B%x00%an%x00%ae", sha)
@@ -74,27 +83,37 @@ def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind
     trailers = " ".join(ln for ln in body.lower().splitlines() if ln.strip().startswith(_TRAILER_KEYS))
     hay = trailers + " " + ident.replace("\x00", " ").lower()   # trailer lines + author name/email
     for needle, agent in _AI_TRAILERS.items():
-        if needle in hay:
+        if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", hay):
             return AuthorType.ai, agent
     return AuthorType.human, AgentKind.unknown
 
 
 def _matches(path_a: str, path_b: str) -> bool:
-    return path_a.endswith(path_b) or path_b.endswith(path_a)
+    """Same file? Tolerates one side being absolute or repo-relative, but only matches at a
+    path-segment boundary — 'foo/bar.py' must never match 'ar.py'."""
+    a = path_a.replace("\\", "/").rstrip("/")
+    b = path_b.replace("\\", "/").rstrip("/")
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
 
 
 def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provenance") -> list[TraceLine]:
-    """Per-line provenance. Prefers commit-bound *records* (they carry human_edit_ratio +
-    review state + hybrid classification), then falls back to raw events, then to inference."""
+    """Per-line provenance. A bound *record* is trusted only for the commit it was bound to,
+    at the line's position in that commit (blame's orig line number) — so a record can never
+    claim a line a human later rewrote, and attribution survives insertions above the span.
+    Raw *events* (pre-commit captures) only ever explain not-yet-committed lines; everything
+    else falls back to commit-trailer inference (flagged `inferred`, cached per sha)."""
     records = [r for r in read_records(repo_root, ledger=ledger) if _matches(r.file_path, file_path)]
     events = [e for e in read_events(repo_root, ledger=ledger) if _matches(e.file_path, file_path)]
     reviewed_shas = read_reviewed(repo_root, ledger=ledger)
+    infer_cache: dict[str, tuple[AuthorType, AgentKind]] = {}
     out: list[TraceLine] = []
-    for line_no, sha, content in _blame(repo_root, file_path):
+    for line_no, orig_no, sha, content in _blame(repo_root, file_path):
         seen = sha in reviewed_shas        # human signed off on this commit's AI lines
-        # records first: prefer one bound to *this* commit, else any whose span covers the line
-        rec = next((r for r in records if r.commit_sha == sha and r.line_start <= line_no <= r.line_end), None) \
-            or next((r for r in records if r.line_start <= line_no <= r.line_end), None)
+        uncommitted = not sha or sha == _NULL_SHA
+        rec = None
+        if not uncommitted:
+            rec = next((r for r in records
+                        if r.commit_sha == sha and r.line_start <= orig_no <= r.line_end), None)
         if rec:
             out.append(TraceLine(
                 line_no=line_no, content=content, commit_sha=sha,
@@ -103,15 +122,20 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
                 prompt_ref=rec.prompt_ref,
             ))
             continue
-        ev = next((e for e in events if e.line_start <= line_no <= e.line_end), None)
-        if ev:
-            out.append(TraceLine(
-                line_no=line_no, content=content, commit_sha=sha,
-                author_type=ev.author_type, model=ev.model, agent=ev.agent,
-                reviewed=seen, prompt_ref=ev.prompt_ref,
-            ))
+        if uncommitted:
+            ev = next((e for e in events if e.line_start <= line_no <= e.line_end), None)
+            if ev:
+                out.append(TraceLine(
+                    line_no=line_no, content=content, commit_sha=None,
+                    author_type=ev.author_type, model=ev.model, agent=ev.agent,
+                    reviewed=False, prompt_ref=ev.prompt_ref,
+                ))
+            else:   # uncommitted and unrecorded → a human is typing
+                out.append(TraceLine(line_no=line_no, content=content, commit_sha=None))
             continue
-        author, agent = _infer_from_commit(repo_root, sha)
+        if sha not in infer_cache:
+            infer_cache[sha] = _infer_from_commit(repo_root, sha)
+        author, agent = infer_cache[sha]
         out.append(TraceLine(
             line_no=line_no, content=content, commit_sha=sha,
             author_type=author, agent=agent, reviewed=seen, inferred=author != AuthorType.human,
@@ -128,9 +152,12 @@ def summarize(lines: list[TraceLine], repo: str) -> TraceSummary:
                 s.unreviewed_ai_lines += 1
         elif ln.author_type == AuthorType.hybrid:
             s.hybrid_lines += 1
+            if not ln.reviewed:                 # hybrid is AI-originated — it's review debt too
+                s.unreviewed_ai_lines += 1
         else:
             s.human_lines += 1
         if ln.model:
             s.by_model[ln.model] = s.by_model.get(ln.model, 0) + 1
-        s.by_agent[ln.agent.value] = s.by_agent.get(ln.agent.value, 0) + 1
+        if ln.author_type != AuthorType.human:   # by_agent is an AI rollup — humans aren't an "agent"
+            s.by_agent[ln.agent.value] = s.by_agent.get(ln.agent.value, 0) + 1
     return s

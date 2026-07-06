@@ -44,13 +44,14 @@ class Git:
             input=input_bytes,
             capture_output=True,
             env=full_env,
+            timeout=120,   # materialize can chew on big repos, but never hang forever
         )
         if check and proc.returncode != 0:
             raise GitError(list(args), proc.returncode, proc.stderr.decode("utf-8", "replace"))
         return proc.stdout.decode("utf-8", "replace")
 
     def run_bytes(self, *args: str, check: bool = True) -> bytes:
-        proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True)
+        proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, timeout=120)
         if check and proc.returncode != 0:
             raise GitError(list(args), proc.returncode, proc.stderr.decode("utf-8", "replace"))
         return proc.stdout

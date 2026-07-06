@@ -41,6 +41,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="gitly", version="0.0.1", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    """One line per request: method, path, status, duration — enough to debug a slow or
+    failing endpoint without adding a tracing stack."""
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    ms = (time.perf_counter() - t0) * 1000
+    if request.url.path != "/health":            # keep liveness probes out of the logs
+        print(f"[gitly] {request.method} {request.url.path} -> {response.status_code} ({ms:.0f}ms)", flush=True)
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

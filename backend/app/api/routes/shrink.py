@@ -73,8 +73,9 @@ class ShrinkRequest(BaseModel):
 
 @router.post("/jobs")
 def create_shrink_job(req: ShrinkRequest):
-    """Enqueue an async shrink job (clone → plan → materialize → verify → open stacked PRs).
-    Used by the hosted GitHub-App flow; for a local repo, prefer the gitly CLI."""
+    """Enqueue an async shrink. The worker runs the REAL engine (plan → materialize →
+    tree-equality verify) on a repo path it can reach; cloning from a GitHub URL is the
+    GitHub-App milestone. For a local repo, the gitly CLI does the same flow inline."""
     job_id = uuid.uuid4().hex
     try:
         from workers.tasks.shrink import run_shrink

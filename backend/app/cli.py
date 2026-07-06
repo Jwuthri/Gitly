@@ -20,7 +20,7 @@ app.add_typer(trace_app, name="trace")
 def _repo_root() -> Path:
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True, timeout=30
         )
         return Path(out.stdout.strip())
     except Exception:
@@ -28,12 +28,12 @@ def _repo_root() -> Path:
 
 
 def _tracked_files(root: Path) -> list[str]:
-    out = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True, text=True, timeout=30)
     return out.stdout.splitlines()
 
 
 def _git_user(root: Path) -> str:
-    out = subprocess.run(["git", "-C", str(root), "config", "user.name"], capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", str(root), "config", "user.name"], capture_output=True, text=True, timeout=30)
     return out.stdout.strip() or "unknown"
 
 
@@ -60,16 +60,47 @@ def _render_summary(s) -> str:
     return "\n".join(rows)
 
 
+def _warn_unbound(root: Path) -> None:
+    """Committed-but-never-bound events can't attribute committed lines (events only explain
+    uncommitted ones) — say so instead of silently under-reporting AI lines. Events whose file
+    is still dirty are healthy pending captures, not stale, so they don't count."""
+    try:
+        from backend.app.engines.trace.binder import _rel
+        from backend.app.engines.trace.recorder import read_bound_ids, read_events
+        pending = [e for e in read_events(root) if e.event_id not in read_bound_ids(root)]
+        if not pending:
+            return
+        out = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=30).stdout
+        dirty = {ln[3:].split(" -> ")[-1].strip().strip('"') for ln in out.splitlines() if len(ln) > 3}
+        stale = [e for e in pending if _rel(root, e.file_path) not in dirty]
+    except Exception:
+        return
+    if stale:
+        typer.secho(
+            f"note: {len(stale)} captured event(s) were never bound to their commit — those AI lines "
+            "show as inferred/human. Fix now with `gitly bind --backfill`; prevent it with `gitly init` "
+            "(installs the post-commit hook).",
+            fg="yellow", err=True,
+        )
+
+
 @trace_app.callback(invoke_without_command=True)
 def trace_default(
     ctx: typer.Context,
     file: str = typer.Argument(None, help="File to trace (blame-style provenance)."),
     summary: bool = typer.Option(False, "--summary", help="Repo rollup instead of per-line."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable output (for CI/tooling)."),
+    max_unreviewed: int = typer.Option(
+        None, "--max-unreviewed",
+        help="CI gate: exit 1 if unreviewed AI-origin lines exceed this (use 0 to require full review).",
+    ),
 ):
     if ctx.invoked_subcommand is not None:
         return
     root = _repo_root()
-    if summary or not file:
+    _warn_unbound(root)
+    if summary or not file or max_unreviewed is not None:
         files = [file] if file else _tracked_files(root)
         all_lines = []
         for f in files:
@@ -77,7 +108,13 @@ def trace_default(
                 all_lines += trace_file(root, f)
             except Exception:
                 continue
-        typer.echo(_render_summary(summarize(all_lines, repo=root.name)))
+        s = summarize(all_lines, repo=root.name)
+        typer.echo(s.model_dump_json(indent=2) if json_out else _render_summary(s))
+        if max_unreviewed is not None and s.unreviewed_ai_lines > max_unreviewed:
+            typer.secho(
+                f"x {s.unreviewed_ai_lines} unreviewed AI line(s) > allowed {max_unreviewed} — "
+                "run `gitly review <files>` to sign off.", fg="red", err=True)
+            raise typer.Exit(1)
         return
     try:
         lines = trace_file(root, file)
@@ -85,6 +122,9 @@ def trace_default(
         typer.secho(f"Can't trace '{file}' — it isn't a tracked file in {root.name} "
                     "(check the path, and make sure it's committed).", fg="red", err=True)
         raise typer.Exit(1)
+    if json_out:
+        typer.echo(json.dumps([ln.model_dump(mode="json") for ln in lines], indent=2))
+        return
     for ln in lines:
         typer.echo(f"{ln.line_no:>5}  {_tag(ln):<26} {ln.content}")
 
@@ -93,16 +133,21 @@ def trace_default(
 def bind(
     repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
     quiet: bool = typer.Option(False, "--quiet", help="Say nothing on success (for the post-commit hook)"),
+    do_backfill: bool = typer.Option(
+        False, "--backfill",
+        help="Also bind stranded old events (committed without the hook) to the commit that introduced them.",
+    ),
 ):
     """Bind captured AI-authorship events to the latest commit, computing the human-edit ratio.
 
     Runs automatically via the post-commit hook `gitly init` installs; safe to run by hand.
     This is what lets `gitly trace` show real edit ratios and hybrid lines offline."""
-    from backend.app.engines.trace.binder import bind_head
+    from backend.app.engines.trace.binder import backfill, bind_head
 
     root = Path(repo if repo != "." else str(_repo_root()))
     try:
         sha, records = bind_head(root)
+        rescued = backfill(root) if do_backfill else []
     except Exception as e:  # never disrupt a commit
         if not quiet:
             typer.secho(f"bind skipped: {e}", fg="yellow", err=True)
@@ -110,7 +155,9 @@ def bind(
     if not quiet:
         if records:
             typer.secho(f"bound {len(records)} authorship event(s) to {sha[:8]}", fg="green")
-        else:
+        for bsha, n in rescued:
+            typer.secho(f"backfilled {n} event(s) to {bsha[:8]}", fg="green")
+        if not records and not rescued:
             typer.echo("nothing to bind")
 
 
@@ -263,7 +310,7 @@ def scan(staged: bool = typer.Option(False, "--staged", help="Scan staged change
     root = _repo_root()
     if staged:
         text = subprocess.run(
-            ["git", "-C", str(root), "diff", "--cached"], capture_output=True, text=True
+            ["git", "-C", str(root), "diff", "--cached"], capture_output=True, text=True, timeout=60
         ).stdout
     else:
         text = sys.stdin.read()
@@ -559,6 +606,59 @@ def config():
     from backend.app.engines.copilot import brain
 
     _show_brain(brain)
+
+
+@app.command()
+def doctor():
+    """Diagnose the gitly setup: repo, hooks, ledger, brain, backend — and how to fix each."""
+    import urllib.request
+    from backend.app.engines.copilot import brain
+    from backend.app.engines.trace.recorder import read_bound_ids, read_events, read_records
+
+    def row(state: bool | None, label: str, detail: str, fix: str = "") -> None:
+        mark = "✓" if state else ("-" if state is None else "x")
+        color = "green" if state else (None if state is None else "red")
+        line = f" {typer.style(mark, fg=color)} {label:<28} {detail}"
+        typer.echo(line + (f"\n   fix: {fix}" if fix and state is False else ""))
+
+    def _has(hook: Path) -> bool:
+        try:
+            return "gitly" in hook.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+    root = _repo_root()
+    in_repo = (root / ".git").exists()
+    row(in_repo, "git repository", str(root) if in_repo else "not a git repo", "git init")
+    if not in_repo:
+        raise typer.Exit(1)
+
+    row(_has(root / ".git" / "hooks" / "pre-commit"), "secret pre-commit hook",
+        "blocks committed secrets", "gitly init")
+    row(_has(root / ".git" / "hooks" / "post-commit"), "bind post-commit hook",
+        "binds AI authorship to each commit", "gitly init")
+    claude_settings = root / ".claude" / "settings.json"
+    captured = claude_settings.exists() and "claude_post_tool" in claude_settings.read_text(encoding="utf-8")
+    row(True if captured else None, "Claude Code capture hook",
+        "records what the agent writes" if captured else "not registered (fine if you don't use Claude Code)",
+        "gitly init --claude-code")
+
+    events, records = read_events(root), read_records(root)
+    pending = [e for e in events if e.event_id not in read_bound_ids(root)]
+    stale_hint = "  — run `gitly bind --backfill`" if pending else ""
+    row(True, "provenance ledger",
+        f"{len(events)} event(s) · {len(records)} bound record(s) · {len(pending)} pending{stale_hint}")
+
+    prov = brain.provider()
+    row(True, "brain (commit messages)",
+        prov + ("" if prov != "heuristic" else " — offline fallback; `gitly auth` enables LLM messages"))
+
+    api = os.environ.get("GITLY_API_URL", "http://localhost:8000")
+    try:
+        urllib.request.urlopen(f"{api}/health", timeout=2)
+        row(True, "backend API", api)
+    except Exception:
+        row(None, "backend API", f"{api} unreachable — optional (dashboard/MCP scan only); `make up` starts it")
 
 
 _PRE_COMMIT_HOOK = """#!/usr/bin/env bash

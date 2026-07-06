@@ -187,12 +187,57 @@ def test_backfill_attributes_existing_code(repo):
     assert all(ln.author_type == AuthorType.human for ln in trace_file(repo, "pkg.lock"))
 
 
-def test_bind_skips_files_absent_from_commit(repo):
-    # event for a file that never got committed → no committed text, still binds (ratio 0), no crash
+def test_bind_only_consumes_events_for_files_in_the_commit(repo):
+    # the commit ships real.py only → ghost.py's event must stay pending (not burned on an
+    # unrelated commit), then bind to the commit that actually ships it
     (repo / "real.py").write_text("a = 1\n")
     recorder.record_event(repo, _event("r", "ghost.py", "missing = True\n"))
     _git(repo, "add", "real.py")
     _git(repo, "commit", "-qm", "feat: real")
+    _, records = bind_head(repo)
+    assert records == []                                   # nothing bound, nothing lost
+
+    (repo / "ghost.py").write_text("missing = True\n")
+    _git(repo, "add", "ghost.py")
+    _git(repo, "commit", "-qm", "feat: ghost")
+    sha2, records2 = bind_head(repo)
+    assert len(records2) == 1 and records2[0].file_path == "ghost.py"
+    assert records2[0].commit_sha == sha2                  # bound to the commit that ships it
+    assert records2[0].human_edit_ratio == 0.0
+
+
+def test_backfill_binds_stranded_events_to_the_commit_that_shipped_them(repo):
+    from backend.app.engines.trace.binder import backfill
+
+    code = "def stranded():\n    return 'ai wrote this'\n"
+    (repo / "s.py").write_text(code)
+    recorder.record_event(repo, _event("r", "s.py", code, line_end=2))
+    _git(repo, "add", "s.py")
+    _git(repo, "commit", "-qm", "feat: s")          # committed WITHOUT the post-commit hook
+    (repo / "t.py").write_text("x = 1\n")
+    _git(repo, "add", "t.py")
+    _git(repo, "commit", "-qm", "feat: t")          # HEAD moved on — normal bind can't rescue s.py
+
+    assert bind_head(repo)[1] == []
+    rescued = backfill(repo)
+    assert len(rescued) == 1 and rescued[0][1] == 1
+    ship_sha = _git(repo, "log", "-n", "1", "--format=%H", "--", "s.py").strip()
+    assert recorder.read_records(repo)[0].commit_sha == ship_sha
+
+    lines = trace_file(repo, "s.py")
+    assert all(ln.author_type == AuthorType.ai for ln in lines)
+    assert backfill(repo) == []                     # idempotent — cursor prevents re-binding
+
+
+def test_bind_relativizes_absolute_capture_paths(repo):
+    # capture hooks may record absolute paths; bind must still match the commit's files
+    # and compute the edit ratio via `git show HEAD:<relative path>`
+    code = "def f():\n    return 42\n"
+    (repo / "abs.py").write_text(code)
+    recorder.record_event(repo, _event("r", str(repo / "abs.py"), code, line_end=2))
+    _git(repo, "add", "abs.py")
+    _git(repo, "commit", "-qm", "feat: abs")
     sha, records = bind_head(repo)
-    assert len(records) == 1 and records[0].file_path == "ghost.py"
-    assert records[0].human_edit_ratio == 0.0
+    assert len(records) == 1
+    assert records[0].file_path == "abs.py"                # stored repo-relative
+    assert records[0].human_edit_ratio == 0.0              # committed verbatim → ratio computed, not skipped

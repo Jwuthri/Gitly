@@ -39,12 +39,13 @@ Bind captured AI-authorship events to the latest commit, computing each span's
 `human_edit_ratio` and reclassifying heavily-edited AI spans as `hybrid`.
 
 ```bash
-gitly bind [--quiet] [--repo PATH]
+gitly bind [--quiet] [--backfill] [--repo PATH]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--quiet` | Say nothing on success (used by the `post-commit` hook). |
+| `--backfill` | Rescue stranded events (committed without the hook): pickaxe-search history for the commit that shipped each one, bind there. |
 | `--repo PATH` | Operate on another repo. |
 
 Runs automatically via the `post-commit` hook `gitly init` installs — this is what lets
@@ -129,15 +130,34 @@ gitly config
 AI-authorship provenance, blame-style.
 
 ```bash
-gitly trace [FILE] [--summary]
+gitly trace [FILE] [--summary] [--json] [--max-unreviewed N]
 ```
 
 | Argument / flag | Meaning |
 |---|---|
 | `FILE` | File to trace, per line. Omit (or add `--summary`) for a repo rollup. |
 | `--summary` | Repo rollup: % AI, by model, unreviewed-AI lines. |
+| `--json` | Machine-readable output (per-line or summary) for CI/tooling. |
+| `--max-unreviewed N` | **CI gate**: exit 1 if unreviewed AI-origin lines exceed N (`0` = require full sign-off; pair with `gitly review`). |
+
+```bash
+# in CI: fail the build when AI-written code lands unreviewed
+gitly trace --summary --json --max-unreviewed 0
+```
 
 Full guide: [Trace](../pillars/trace.md).
+
+---
+
+## `gitly doctor`
+
+Diagnose the setup — git repo, both git hooks, the Claude Code capture hook, ledger
+health (with a `--backfill` hint when events are stranded), the active brain provider,
+and backend reachability — each with the command that fixes it.
+
+```bash
+gitly doctor
+```
 
 ---
 

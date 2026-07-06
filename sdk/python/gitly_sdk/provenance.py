@@ -12,8 +12,8 @@ import json
 import os
 import re
 import subprocess
-import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Minimal inline redaction — mirrors backend.app.security.secret_firewall so the SDK stays
@@ -56,11 +56,23 @@ def _repo_root(start: str | None = None) -> Path:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=start or os.getcwd(), capture_output=True, text=True, check=True,
+            cwd=start or os.getcwd(), capture_output=True, text=True, check=True, timeout=10,
         )
         return Path(out.stdout.strip())
     except Exception:
         return Path(start or os.getcwd())
+
+
+def _rel_path(root: Path, file_path: str) -> str:
+    """Store repo-relative paths in the ledger: they survive machine moves and are what
+    the bind step feeds to `git show HEAD:<path>`."""
+    p = Path(file_path)
+    if p.is_absolute():
+        try:
+            return p.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return p.as_posix()
+    return p.as_posix()
 
 
 def record_authorship(
@@ -79,10 +91,11 @@ def record_authorship(
     """Append one redacted authorship event to the local ledger. Returns the event id.
     Call right after an agent applies an edit (e.g. from a PostToolUse hook)."""
     root = _repo_root(repo_root)
+    now = datetime.now(timezone.utc)
     event = {
         "event_id": uuid.uuid4().hex,
         "repo": root.name,
-        "file_path": file_path,
+        "file_path": _rel_path(root, file_path),
         "content_hash": content_hash(proposed_text),
         "line_start": line_start,
         "line_end": line_end,
@@ -93,10 +106,10 @@ def record_authorship(
         "prompt_ref": content_hash(prompt)[:16] if prompt else None,
         "prompt_redacted": redact(prompt),
         "proposed_text": redact(proposed_text),
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "created_at": now.isoformat(),   # UTC with offset — never naive local time
     }
     d = root / ledger
     d.mkdir(parents=True, exist_ok=True)
-    with (d / f"{time.strftime('%Y-%m-%d')}.jsonl").open("a", encoding="utf-8") as fh:
+    with (d / f"{now.strftime('%Y-%m-%d')}.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event) + "\n")
     return event["event_id"]

@@ -1,44 +1,32 @@
 // Browser-side calls (from client components) go to the public URL via the host.
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export async function analyzeDiff(diff: string) {
-  const r = await fetch(`${API}/lens/analyze`, {
+// Surface the response body in errors — a bare status code is undebuggable in the UI.
+async function req(path: string, label: string, init?: RequestInit) {
+  const r = await fetch(`${API}${path}`, init);
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`${label} ${r.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
+  return r.json();
+}
+
+const post = (path: string, label: string, body: unknown) =>
+  req(path, label, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ diff }),
+    body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`lens/analyze ${r.status}`);
-  return r.json();
-}
 
-export async function scanSecrets(text: string) {
-  const r = await fetch(`${API}/copilot/scan`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
-  if (!r.ok) throw new Error(`copilot/scan ${r.status}`);
-  return r.json();
-}
+export const analyzeDiff = (diff: string) => post("/lens/analyze", "lens/analyze", { diff });
 
-export async function getTraceTree(repo: string) {
-  const r = await fetch(`${API}/trace/tree?repo=${encodeURIComponent(repo)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`trace/tree ${r.status}`);
-  return r.json();
-}
+export const scanSecrets = (text: string) => post("/copilot/scan", "copilot/scan", { text });
 
-export async function getTraceFile(repo: string, path: string) {
-  const r = await fetch(`${API}/trace/file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`trace/file ${r.status}`);
-  return r.json();
-}
+export const getTraceTree = (repo: string) =>
+  req(`/trace/tree?repo=${encodeURIComponent(repo)}`, "trace/tree", { cache: "no-store" });
 
-export async function planShrink(diff: string, strength = "balanced") {
-  const r = await fetch(`${API}/shrink/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ diff, strength }),
-  });
-  if (!r.ok) throw new Error(`shrink/analyze ${r.status}`);
-  return r.json();
-}
+export const getTraceFile = (repo: string, path: string) =>
+  req(`/trace/file?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`, "trace/file", { cache: "no-store" });
+
+export const planShrink = (diff: string, strength = "balanced") =>
+  post("/shrink/analyze", "shrink/analyze", { diff, strength });

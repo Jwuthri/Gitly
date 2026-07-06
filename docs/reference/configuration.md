@@ -23,6 +23,7 @@ see `.env.example`.
 | `GITLY_SECRET_FAIL_CLOSED` | `true` | Block on any finding. |
 | `GITLY_PROVENANCE_LEDGER` | `.gitly/provenance` | Local authorship ledger path. |
 | `GITLY_PROVENANCE_SYNC` | `false` | Opt-in: push bound records to the backend. |
+| `GITLY_API_KEY` | — | When set, `POST`/`DELETE /trace/records` require `Authorization: Bearer <key>`; `gitly sync` sends it from the same variable. Set it anywhere the backend isn't localhost-only. |
 
 ## The brain (LLM features)
 

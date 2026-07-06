@@ -4,6 +4,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { existsSync } from "node:fs";
 import * as g from "./lib.js";
 
 const TOOLS: any[] = [
@@ -39,8 +40,18 @@ const TOOLS: any[] = [
   },
   {
     name: "gitly_shrink",
-    description: "Propose splitting a large change into a verified stack of small sub-PRs (gitly shrink).",
-    inputSchema: { type: "object", properties: { base: { type: "string", description: "base ref (default main)" }, head: { type: "string", description: "head ref (default HEAD)" }, cwd: { type: "string" } } },
+    description: "Plan splitting a large change into a stack of small, dependency-ordered sub-PRs (gitly shrink). Reads the diff from git (base...HEAD) and returns the slice plan; materialization runs via the gitly CLI.",
+    inputSchema: { type: "object", properties: { base: { type: "string", description: "base ref (default main)" }, strength: { type: "string", description: "gentle | balanced | aggressive" }, cwd: { type: "string" } } },
+  },
+  {
+    name: "gitly_split",
+    description: "Split the working tree into several logical commits, one per concern (gitly commit --split): deps/config first, then source, tests, docs. Skips risky files, blocks secrets, refuses protected branches. Needs the gitly CLI installed.",
+    inputSchema: { type: "object", properties: { all: { type: "boolean", description: "also include untracked files" }, cwd: { type: "string" } } },
+  },
+  {
+    name: "gitly_init",
+    description: "Install gitly's git hooks in this repo: the secret-blocking pre-commit hook and the post-commit hook that binds AI-authorship events (feeds gitly_trace_summary). Needs the gitly CLI installed.",
+    inputSchema: { type: "object", properties: { claude_code: { type: "boolean", description: "also register the Claude Code authorship-capture hook in .claude/settings.json" }, cwd: { type: "string" } } },
   },
   {
     name: "gitly_absorb",
@@ -119,9 +130,20 @@ async function dispatch(name: string, a: any, cwd: string): Promise<string> {
       return `recorded authorship ${id} for ${a.file_path}:${a.line_start}-${a.line_end} (${a.model || "ai"})`;
     }
     case "gitly_shrink": {
-      const r = await g.shrinkJob(await g.repoName(cwd), a.base || "main", a.head || "HEAD");
-      return `shrink job ${r.job_id} (queued=${r.queued}). ${r.note || ""}`;
+      const base = a.base || "main";
+      const diff = await g.git(cwd, ["diff", `${base}...HEAD`]).catch(async () =>
+        g.git(cwd, ["diff", "master...HEAD"]));   // repos whose trunk is master
+      if (!diff.trim()) return `No diff between ${base} and HEAD — nothing to shrink.`;
+      const r = await g.shrinkPlan(diff, a.strength || "balanced");
+      const rows = (r.slices || []).map((s: any) =>
+        `  #${s.order} ${s.title} — ${s.lines} lines / ${s.files} file(s)` +
+        (s.depends_on?.length ? `  (after #${s.depends_on.join(", #")})` : "")).join("\n");
+      return `${r.original_lines} lines across ${r.original_files} file(s) → ${r.slices?.length ?? 0} slice(s) [${r.strength}]:\n${rows}\n\n${r.note || ""}`;
     }
+    case "gitly_split":
+      return await g.gitlyCli(cwd, ["commit", "--split", ...(a.all ? ["-a"] : [])]);
+    case "gitly_init":
+      return await g.gitlyCli(cwd, ["init", ...(a.claude_code ? ["--claude-code"] : [])]);
     case "gitly_absorb":
       return await g.absorb(cwd, a.into);
     default:
@@ -134,6 +156,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const a: any = req.params.arguments ?? {};
   const cwd = (a.cwd as string) || process.cwd();
+  if (!existsSync(cwd)) {
+    return { content: [{ type: "text", text: `gitly error: cwd does not exist: ${cwd}` }], isError: true };
+  }
   try {
     return { content: [{ type: "text", text: await dispatch(req.params.name, a, cwd) }] };
   } catch (e: any) {

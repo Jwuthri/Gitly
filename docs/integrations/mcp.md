@@ -7,7 +7,7 @@ together with slash commands and a capture hook, as a one-install **Claude Code 
 ## The MCP server
 
 A pure-Node **stdio** server (in `sdk/mcp/`) that composes local git + the gitly backend +
-the provenance ledger into eight opinionated tools:
+the provenance ledger into ten opinionated tools:
 
 | Tool | Does |
 |---|---|
@@ -15,10 +15,12 @@ the provenance ledger into eight opinionated tools:
 | `gitly_scan_secrets` | Run the secret firewall over text or staged changes. |
 | `gitly_explain_diff` | Cluster a diff into conceptual cards (the lens engine). |
 | `gitly_safe_commit` | Safe-staged, secret-checked, conventional commit. |
+| `gitly_split` | Split the working tree into logical commits (`gitly commit --split`; needs the CLI). |
 | `gitly_absorb` | Fold working changes into the right earlier commit(s). |
+| `gitly_init` | Install gitly's git hooks (`gitly init`; needs the CLI). |
 | `gitly_trace_summary` | Authorship rollup for the repo. |
 | `gitly_record_authorship` | Write a (redacted) provenance record to the ledger. |
-| `gitly_shrink` | Plan/validate a shrink stack. |
+| `gitly_shrink` | Plan a shrink stack from `base...HEAD`. |
 
 Point the server at a non-default backend with `GITLY_API_URL`.
 
@@ -49,7 +51,7 @@ Once connected, just ask:
 The repo root is also a **Claude Code plugin** (`.claude-plugin/plugin.json`) that bundles
 everything in one install (`claude plugin validate` passes):
 
-- **MCP server** — the 8 tools above, launched from `${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist`.
+- **MCP server** — the 10 tools above, launched from `${CLAUDE_PLUGIN_ROOT}/sdk/mcp/dist`.
 - **Slash commands** — `/commit`, `/absorb`, `/scan`, `/shrink`, `/lens`, `/trace`
   (in `commands/*.md`).
 - **Hook** — a `PostToolUse(Edit|Write)` hook that records AI authorship to the local

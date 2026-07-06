@@ -1,10 +1,11 @@
 """Provenance API — opt-in sync of authorship records, rollups, file tree, and per-line blame."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from backend.app.config import get_settings
 from backend.app.db.models import ProvenanceRecordORM
 from backend.app.db.session import get_db
 from backend.app.security.secret_firewall import redact
@@ -12,11 +13,25 @@ from shared.schema.provenance import ProvenanceRecord, TraceSummary
 
 router = APIRouter(prefix="/trace", tags=["trace"])
 
+MAX_INGEST_RECORDS = 5000       # per request — sync batches at 500, so 10× headroom
 
-@router.post("/records")
+
+def require_write_key(authorization: str | None = Header(None)) -> None:
+    """Guard mutating routes. With GITLY_API_KEY unset (local dev) this is a no-op;
+    set it anywhere the backend is reachable by more than your own machine."""
+    key = get_settings().gitly_api_key
+    if not key:
+        return
+    if authorization != f"Bearer {key}":
+        raise HTTPException(status_code=401, detail="Set 'Authorization: Bearer <GITLY_API_KEY>'.")
+
+
+@router.post("/records", dependencies=[Depends(require_write_key)])
 def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db)):
     """Sync authorship records from a developer's machine (opt-in). Prompts are re-redacted
     defensively on ingest, so a raw secret can never land in the DB."""
+    if len(records) > MAX_INGEST_RECORDS:
+        raise HTTPException(status_code=413, detail=f"Max {MAX_INGEST_RECORDS} records per request — batch your sync.")
     for r in records:
         db.merge(ProvenanceRecordORM(
             record_id=r.record_id, repo=r.repo, commit_sha=r.commit_sha,
@@ -32,7 +47,7 @@ def ingest_records(records: list[ProvenanceRecord], db: Session = Depends(get_db
     return {"ingested": len(records)}
 
 
-@router.delete("/records")
+@router.delete("/records", dependencies=[Depends(require_write_key)])
 def delete_records(repo: str, db: Session = Depends(get_db)):
     """Clear all records for a repo key (used by `gitly sync --reset` to avoid pile-up)."""
     n = db.execute(delete(ProvenanceRecordORM).where(ProvenanceRecordORM.repo == repo)).rowcount
@@ -58,11 +73,14 @@ def repo_summary(repo: str, db: Session = Depends(get_db)) -> TraceSummary:
                 s.unreviewed_ai_lines += span
         elif r.author_type == "hybrid":
             s.hybrid_lines += span
+            if not r.reviewed_by:               # hybrid is AI-originated — review debt too
+                s.unreviewed_ai_lines += span
         else:
             s.human_lines += span
         if r.model:
             s.by_model[r.model] = s.by_model.get(r.model, 0) + span
-        s.by_agent[r.agent] = s.by_agent.get(r.agent, 0) + span
+        if r.author_type != "human":             # by_agent is an AI rollup — humans aren't an "agent"
+            s.by_agent[r.agent] = s.by_agent.get(r.agent, 0) + span
     return s
 
 
@@ -111,9 +129,17 @@ def file_blame(repo: str, path: str, db: Session = Depends(get_db)):
 
 
 @router.get("/records")
-def list_records(repo: str, db: Session = Depends(get_db)):
+def list_records(
+    repo: str,
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
     rows = db.execute(
-        select(ProvenanceRecordORM).where(ProvenanceRecordORM.repo == repo).limit(500)
+        select(ProvenanceRecordORM)
+        .where(ProvenanceRecordORM.repo == repo)
+        .order_by(ProvenanceRecordORM.file_path, ProvenanceRecordORM.line_start)   # stable pages
+        .limit(limit).offset(offset)
     ).scalars().all()
     return [
         {

@@ -14,6 +14,7 @@ export async function git(cwd: string, args: string[], env?: Record<string, stri
   const { stdout } = await exec("git", args, {
     cwd,
     maxBuffer: 16 * 1024 * 1024,
+    timeout: 60_000,   // a hung git call must not hang the agent's tool call forever
     env: env ? { ...process.env, ...env } : undefined,
   });
   return stdout;
@@ -49,7 +50,10 @@ const sha = (s: string) => createHash("sha256").update(s || "").digest("hex");
 // ---- backend api ----
 async function api(path: string, init?: RequestInit): Promise<any> {
   const r = await fetch(`${API}${path}`, init);
-  if (!r.ok) throw new Error(`gitly API ${path} -> HTTP ${r.status}`);
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`gitly API ${path} -> HTTP ${r.status}${body ? `: ${body.slice(0, 300)}` : ""}`);
+  }
   return r.json();
 }
 const post = (path: string, body: unknown) =>
@@ -58,7 +62,21 @@ const post = (path: string, body: unknown) =>
 export const scanSecrets = (text: string) => post("/copilot/scan", { text });
 export const analyzeDiff = (diff: string) => post("/lens/analyze", { diff });
 export const traceSummary = (repo: string) => api(`/trace/summary?repo=${encodeURIComponent(repo)}`);
-export const shrinkJob = (repo: string, base: string, head: string) => post("/shrink/jobs", { repo, base, head });
+export const shrinkPlan = (diff: string, strength = "balanced") => post("/shrink/analyze", { diff, strength });
+
+// ---- the gitly CLI (for tools whose logic lives in python: split, init) ----
+export async function gitlyCli(cwd: string, args: string[]): Promise<string> {
+  try {
+    const { stdout, stderr } = await exec("gitly", args, { cwd, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 });
+    return (stdout + (stderr ? `\n${stderr}` : "")).trim();
+  } catch (e: any) {
+    if (e?.code === "ENOENT") {
+      throw new Error("the `gitly` CLI isn't installed — run `pip install gitly` (or `pip install -e .` in the gitly repo).");
+    }
+    // the CLI's refusals (protected branch, secrets) arrive as nonzero exits — surface them verbatim
+    throw new Error((e?.stderr || e?.stdout || e?.message || String(e)).trim());
+  }
+}
 
 // ---- provenance ledger ----
 export async function recordAuthorship(
@@ -69,10 +87,12 @@ export async function recordAuthorship(
   const dir = join(root, ledger);
   await mkdir(dir, { recursive: true });
   const event_id = sha(`${ev.file_path}:${ev.line_start}:${Date.now()}:${Math.random()}`).slice(0, 32);
+  // repo-relative paths, like the python SDK — they survive machine moves and feed `git show`
+  const rel = ev.file_path.startsWith(root + "/") ? ev.file_path.slice(root.length + 1) : ev.file_path;
   const rec = {
     event_id,
     repo: root.split("/").filter(Boolean).pop() || "repo",
-    file_path: ev.file_path,
+    file_path: rel,
     content_hash: sha(ev.proposed_text || ""),
     line_start: ev.line_start,
     line_end: ev.line_end,
@@ -83,7 +103,7 @@ export async function recordAuthorship(
     prompt_ref: ev.prompt ? sha(ev.prompt).slice(0, 16) : null,
     prompt_redacted: ev.prompt ? redact(ev.prompt) : null,
     proposed_text: redact(ev.proposed_text || ""),
-    created_at: new Date().toISOString().slice(0, 19),
+    created_at: new Date().toISOString(),   // full ISO with Z — never a naive timestamp
   };
   await appendFile(join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(rec) + "\n", "utf8");
   return event_id;
