@@ -161,6 +161,8 @@ gitly doctor                 # diagnose the setup: repo, hooks, ledger, brain, b
 gitly trace <file>           # per-line AI/human provenance (git blame + recorded provenance)
 gitly trace --summary        # repo rollup: % AI, by model, unreviewed-AI lines
 gitly trace --summary --json --max-unreviewed 0   # CI gate: fail the build on unreviewed AI code
+gitly review --from-github   # automated review sync: merged-PR approvals clear the AI lines
+                             # (Reviewed-by:/Acked-by: trailers are honored automatically, zero commands)
 gitly bind --backfill        # rescue events committed without the hook (bind to their real commit)
 gitly scan --staged          # secret firewall over staged changes (exit 1 = blocked)
 echo "text" | gitly scan     # scan stdin

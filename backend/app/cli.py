@@ -161,23 +161,76 @@ def bind(
             typer.echo("nothing to bind")
 
 
+def _parse_gh_pr_list(payload: str) -> tuple[list[int], set[str]]:
+    """(APPROVED merged-PR numbers, human approver logins) from
+    `gh pr list --json number,reviewDecision,latestReviews` output. Commits are fetched
+    per-PR afterwards — asking for them in the list query blows GitHub's GraphQL node budget."""
+    numbers: list[int] = []
+    approvers: set[str] = set()
+    for pr in json.loads(payload or "[]"):
+        if pr.get("reviewDecision") != "APPROVED":
+            continue
+        if isinstance(pr.get("number"), int):
+            numbers.append(pr["number"])
+        for rv in pr.get("latestReviews") or []:
+            login = ((rv.get("author") or {}).get("login") or "").strip()
+            if rv.get("state") == "APPROVED" and login and "bot" not in login.lower():
+                approvers.add(login)
+    return numbers, approvers
+
+
 @app.command()
 def review(
     paths: list[str] = typer.Argument(None, help="File(s) whose AI lines to mark reviewed"),
     commit: list[str] = typer.Option(None, "--commit", help="Specific commit SHA(s) to mark reviewed (repeatable)"),
     all_files: bool = typer.Option(False, "--all", help="Mark every AI line in the repo reviewed"),
+    from_github: bool = typer.Option(
+        False, "--from-github",
+        help="Automated: harvest merged-PR approvals via the `gh` CLI and mark their commits reviewed.",
+    ),
+    limit: int = typer.Option(200, "--limit", help="How many recent merged PRs --from-github scans"),
     show: bool = typer.Option(False, "--list", help="List reviewed commits and exit"),
     by: str = typer.Option(None, "--by", help="Reviewer name (default: your git user.name)"),
     repo: str = typer.Option(".", "--repo", help="Path to the git repo"),
 ):
     """Sign off on AI-authored code — clears it from `unreviewed AI lines`.
 
-    Reviews by the commit that introduced each line, so it works for recorded AND inferred
-    provenance. e.g. `gitly review app.py`, `gitly review --commit <sha>`, `gitly review --all`."""
+    Three ways review gets recorded: explicit (`gitly review app.py` / `--commit` / `--all`),
+    harvested from GitHub PR approvals (`--from-github`; run it in CI after merges), or a
+    `Reviewed-by:`/`Acked-by:` commit trailer (picked up automatically, no command needed)."""
     from backend.app.engines.trace.blame import trace_file
     from backend.app.engines.trace.recorder import mark_reviewed, read_reviewed
 
     root = Path(repo if repo != "." else str(_repo_root()))
+    if from_github:
+        def _gh(*args: str) -> str:
+            try:
+                p = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=root, timeout=120)
+            except FileNotFoundError:
+                typer.secho("`gh` CLI not found — install https://cli.github.com and `gh auth login`.",
+                            fg="red", err=True)
+                raise typer.Exit(1)
+            if p.returncode != 0:
+                typer.secho(f"gh failed: {p.stderr.strip()}", fg="red", err=True)
+                raise typer.Exit(1)
+            return p.stdout
+
+        numbers, approvers = _parse_gh_pr_list(_gh(
+            "pr", "list", "--state", "merged", "--limit", str(limit),
+            "--json", "number,reviewDecision,latestReviews"))
+        if not numbers:
+            typer.echo("No approved merged PRs found — nothing to sync.")
+            return
+        gh_shas: set[str] = set()
+        for num in numbers:   # commits per approved PR only — cheap, and few of them
+            gh_shas.update(s for s in _gh("pr", "view", str(num), "--json", "commits",
+                                          "--jq", ".commits[].oid").split() if s)
+        who = ("github:" + ",".join(sorted(approvers))) if approvers else "github"
+        n = mark_reviewed(root, sorted(gh_shas), by=who)
+        typer.secho(
+            f"Synced GitHub approvals: {n} newly reviewed commit(s) "
+            f"(from {len(gh_shas)} commit(s) across {len(numbers)} approved PR(s)).", fg="green")
+        return
     if show:
         rv = read_reviewed(root)
         typer.echo(f"{len(rv)} reviewed commit(s)")

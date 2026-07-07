@@ -64,28 +64,42 @@ def _blame(repo_root: Path, file_path: str) -> list[tuple[int, int, str, str]]:
 
 
 _TRAILER_KEYS = ("co-authored-by:", "co-developed-by:", "generated-by:", "assisted-by:")
+_REVIEW_TRAILERS = ("reviewed-by:", "acked-by:")   # kernel-style human sign-off, free review signal
 
 
-def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind]:
-    """Infer AI authorship ONLY from commit *trailers* (`Co-Authored-By: Claude`) and the
+def _commit_meta(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind, bool]:
+    """(author_type, agent, human_review_trailer) for a commit — one `git log` per sha.
+
+    AI authorship is inferred ONLY from commit *trailers* (`Co-Authored-By: Claude`) and the
     *author identity* — never a bare mention in the subject/body. (A commit titled
     `test(copilot): …` is *about* Copilot, not written by it — that was a false positive.)
     Needles match at word boundaries, so 'Precursor' is not 'cursor'. Known limit: a human
     literally named after an agent (e.g. Devin) still matches — recorded provenance wins
-    over inference whenever it exists."""
+    over inference whenever it exists.
+
+    A `Reviewed-by:`/`Acked-by:` trailer counts as human review, so teams already using
+    those conventions get review status with zero extra commands."""
     if not sha or sha == _NULL_SHA:
-        return AuthorType.human, AgentKind.unknown
+        return AuthorType.human, AgentKind.unknown, False
     try:
         raw = _git(repo_root, "log", "-1", "--format=%B%x00%an%x00%ae", sha)
     except subprocess.CalledProcessError:
-        return AuthorType.human, AgentKind.unknown
+        return AuthorType.human, AgentKind.unknown, False
     body, _, ident = raw.partition("\x00")
-    trailers = " ".join(ln for ln in body.lower().splitlines() if ln.strip().startswith(_TRAILER_KEYS))
+    body_lines = [ln.strip() for ln in body.lower().splitlines()]
+    reviewed = any(ln.startswith(_REVIEW_TRAILERS) for ln in body_lines)
+    trailers = " ".join(ln for ln in body_lines if ln.startswith(_TRAILER_KEYS))
     hay = trailers + " " + ident.replace("\x00", " ").lower()   # trailer lines + author name/email
     for needle, agent in _AI_TRAILERS.items():
         if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", hay):
-            return AuthorType.ai, agent
-    return AuthorType.human, AgentKind.unknown
+            return AuthorType.ai, agent, reviewed
+    return AuthorType.human, AgentKind.unknown, reviewed
+
+
+def _infer_from_commit(repo_root: Path, sha: str) -> tuple[AuthorType, AgentKind]:
+    """Back-compat shim over `_commit_meta` (authorship only)."""
+    author, agent, _ = _commit_meta(repo_root, sha)
+    return author, agent
 
 
 def _matches(path_a: str, path_b: str) -> bool:
@@ -105,11 +119,19 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
     records = [r for r in read_records(repo_root, ledger=ledger) if _matches(r.file_path, file_path)]
     events = [e for e in read_events(repo_root, ledger=ledger) if _matches(e.file_path, file_path)]
     reviewed_shas = read_reviewed(repo_root, ledger=ledger)
-    infer_cache: dict[str, tuple[AuthorType, AgentKind]] = {}
+    meta_cache: dict[str, tuple[AuthorType, AgentKind, bool]] = {}
+
+    def meta(sha: str) -> tuple[AuthorType, AgentKind, bool]:
+        if sha not in meta_cache:
+            meta_cache[sha] = _commit_meta(repo_root, sha)
+        return meta_cache[sha]
+
     out: list[TraceLine] = []
     for line_no, orig_no, sha, content in _blame(repo_root, file_path):
-        seen = sha in reviewed_shas        # human signed off on this commit's AI lines
         uncommitted = not sha or sha == _NULL_SHA
+        # review signal from ANY source: explicit `gitly review` / synced GitHub approvals
+        # (reviewed.jsonl) or a Reviewed-by/Acked-by trailer on the commit itself
+        seen = not uncommitted and (sha in reviewed_shas or meta(sha)[2])
         rec = None
         if not uncommitted:
             rec = next((r for r in records
@@ -133,9 +155,7 @@ def trace_file(repo_root: Path, file_path: str, *, ledger: str = ".gitly/provena
             else:   # uncommitted and unrecorded → a human is typing
                 out.append(TraceLine(line_no=line_no, content=content, commit_sha=None))
             continue
-        if sha not in infer_cache:
-            infer_cache[sha] = _infer_from_commit(repo_root, sha)
-        author, agent = infer_cache[sha]
+        author, agent, _ = meta(sha)
         out.append(TraceLine(
             line_no=line_no, content=content, commit_sha=sha,
             author_type=author, agent=agent, reviewed=seen, inferred=author != AuthorType.human,

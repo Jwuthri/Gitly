@@ -95,6 +95,43 @@ def test_matches_requires_a_path_boundary():
     assert not _matches("foobar.py", "bar.py")
 
 
+def test_reviewed_by_trailer_counts_as_human_review(repo):
+    # zero-command review: a Reviewed-by/Acked-by trailer on the commit clears the AI lines
+    from backend.app.engines.trace.blame import summarize
+    (repo / "r.py").write_text("a = 1\n")
+    _git(repo, "add", "r.py")
+    _git(repo, "commit", "-qm",
+         "feat: r\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nReviewed-by: Alice <alice@corp.com>")
+
+    lines = trace_file(repo, "r.py")
+    assert lines[0].author_type == AuthorType.ai and lines[0].reviewed
+    assert summarize(lines, repo="r").unreviewed_ai_lines == 0
+
+    # same AI trailer WITHOUT a review trailer stays unreviewed
+    (repo / "u.py").write_text("b = 2\n")
+    _git(repo, "add", "u.py")
+    _git(repo, "commit", "-qm", "feat: u\n\nCo-Authored-By: Claude <noreply@anthropic.com>")
+    assert summarize(trace_file(repo, "u.py"), repo="r").unreviewed_ai_lines == 1
+
+
+def test_parse_gh_pr_list_extracts_approved_prs_and_humans():
+    import json as _json
+    from backend.app.cli import _parse_gh_pr_list
+    payload = _json.dumps([
+        {"number": 1, "reviewDecision": "APPROVED",
+         "latestReviews": [
+             {"state": "APPROVED", "author": {"login": "alice"}},
+             {"state": "APPROVED", "author": {"login": "dependabot[bot]"}},   # bots don't count
+             {"state": "COMMENTED", "author": {"login": "carol"}},
+         ]},
+        {"number": 2, "reviewDecision": "REVIEW_REQUIRED", "latestReviews": []},   # skipped
+        {"number": 3, "reviewDecision": "APPROVED", "latestReviews": []},
+    ])
+    numbers, approvers = _parse_gh_pr_list(payload)
+    assert numbers == [1, 3]
+    assert approvers == {"alice"}
+
+
 def test_inference_needles_match_words_not_substrings(repo):
     (repo / "p.py").write_text("a = 1\n")
     _git(repo, "add", "p.py")

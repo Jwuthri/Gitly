@@ -25,6 +25,13 @@ surfaced as a blame-style CLI and a web dashboard.
     - `AI:<model>` — written by a model/agent. A trailing `~` means **inferred** (not
       explicitly recorded), and `!unreviewed` flags AI lines a human hasn't signed off on.
 
+    Review is cleared by any of three signals — no manual bookkeeping required:
+
+    1. **GitHub PR approvals** — `gitly review --from-github` (run it in CI after merges)
+       marks every commit of an approved, merged PR as reviewed via the `gh` CLI.
+    2. **`Reviewed-by:` / `Acked-by:` trailers** — honored automatically at trace time.
+    3. **Explicit** — `gitly review <file>` / `--commit <sha>` / `--all` for everything else.
+
 === "Repo summary"
 
     ```console

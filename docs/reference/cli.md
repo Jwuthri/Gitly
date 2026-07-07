@@ -149,6 +149,27 @@ Full guide: [Trace](../pillars/trace.md).
 
 ---
 
+## `gitly review`
+
+Clear AI lines from `unreviewed AI lines`. Three signals feed it; only the last is manual:
+
+```bash
+gitly review --from-github        # automated: merged-PR approvals (via `gh`) mark their commits reviewed
+gitly review app.py               # explicit: sign off one file's AI lines
+gitly review --commit <sha> --all # …or specific commits / the whole repo
+```
+
+| Flag | Meaning |
+|---|---|
+| `--from-github` | Harvest approvals of merged PRs with the `gh` CLI (`--limit`, default 200). Run it in CI after merges — review status stays in sync with zero habits changed. |
+| `--by NAME` | Reviewer to record for explicit sign-offs (default: git `user.name`). |
+| `--list` | Show reviewed commits. |
+
+`Reviewed-by:` / `Acked-by:` commit trailers are honored automatically at trace time — no
+command at all for teams already using them.
+
+---
+
 ## `gitly doctor`
 
 Diagnose the setup — git repo, both git hooks, the Claude Code capture hook, ledger
